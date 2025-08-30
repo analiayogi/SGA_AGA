@@ -1,0 +1,465 @@
+# RNA-Seq analysis: UCMSC samples after adipogenesis at day 21
+# SGA vs AGA
+# Pipeline creator: Analia Gisela Yogi
+
+#----------------PREPARE THE WORKING SPACE---------------------------------------------------------------
+#Set directory:
+setwd(dir="/Users/AnaliaYogi/Desktop/RNASeq_Adipocyte_Ana/Adipocyte_DESeq2_Last")
+
+
+# Required libraries
+library(biomaRt)
+library(dplyr)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(dplyr)
+library(fgsea)
+library(stringr)
+
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("EnhancedVolcano")
+BiocManager::install("DESeq2")
+
+library(EnhancedVolcano)
+library(DESeq2)
+library(plotly)  
+
+if (!require(extrafont)) install.packages("extrafont")
+library(extrafont)
+font_import()  
+loadfonts(device = "pdf")
+
+
+# ------------------LOADING THE DATA INTO THE R ENVIRONMENT/DATA PREPARATION-------------------------------------------
+# Import the data
+raw_counts <- read.table("adipocyte_raw_counts_paired.csv", 
+                         header = TRUE, 
+                         row.names = 1, 
+                         sep = ";",  # o el separador correcto
+                         check.names = FALSE)
+
+#Check if there is some na
+sum(is.na(raw_counts))
+
+# Revise if the data was correctly imported
+print(dim(raw_counts))
+print(colnames(raw_counts))
+print(head(raw_counts, 5))
+
+#-----------------------CHANGE ENSEMBLE IDs to GENE SYMBOLS-------------------------------
+
+# Obtaining ENSEMBLE IDs from the rows: 
+ensembl_ids <- rownames(raw_counts)
+
+#Check if it was done correctly
+print(paste(length(ensembl_ids)))
+print(head(ensembl_ids, 10))
+
+# Remove IDs version numbers
+ensembl_ids_clean <- gsub("\\.\\d+$", "", ensembl_ids)
+
+# Check if there are differences after cleaning up
+different_ids <- sum(ensembl_ids != ensembl_ids_clean)
+print(paste("IDs with version numbers removed", different_ids))
+
+# Retrieve annotations in a single request
+
+# biomaRt
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+annotations <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol", "gene_biotype", "description"),
+  filters = "ensembl_gene_id",
+  values = ensembl_ids_clean,
+  mart = mart
+)
+
+# Annotations process
+annotations$ensembl_gene_id_original <- ensembl_ids[match(annotations$ensembl_gene_id, ensembl_ids_clean)]
+print(table(annotations$gene_biotype))
+
+# Filtering for valid symbols
+protein_coding <- annotations[annotations$gene_biotype == "protein_coding" & 
+                                annotations$hgnc_symbol != "", ]
+
+print(paste( nrow(protein_coding)))
+
+
+
+# Create a mapping table
+mapping_table <- data.frame(
+  ensembl_id_original = ensembl_ids,
+  ensembl_id_clean = ensembl_ids_clean,
+  gene_symbol = NA,
+  gene_biotype = NA,
+  description = NA,
+  has_symbol = FALSE,
+  is_protein_coding = FALSE,
+  stringsAsFactors = FALSE
+)
+
+# Adding annotation information
+for(i in 1:nrow(mapping_table)) {
+  ensembl_id <- mapping_table$ensembl_id_clean[i]
+  annotation_match <- annotations[annotations$ensembl_gene_id == ensembl_id, ]
+  
+  if(nrow(annotation_match) > 0) {
+    annotation_match <- annotation_match[1, ]
+    mapping_table$gene_symbol[i] <- annotation_match$hgnc_symbol
+    mapping_table$gene_biotype[i] <- annotation_match$gene_biotype
+    mapping_table$description[i] <- annotation_match$description
+    mapping_table$has_symbol[i] <- annotation_match$hgnc_symbol != ""
+    mapping_table$is_protein_coding[i] <- annotation_match$gene_biotype == "protein_coding"
+  }
+}
+
+
+# Filter for genes protein-coding with valid symbols 
+valid_genes <- mapping_table[mapping_table$has_symbol & mapping_table$is_protein_coding, ]
+valid_genes <- valid_genes[!is.na(valid_genes$has_symbol), ]
+
+
+
+# Remove duplicated genes
+duplicated_symbols <- duplicated(valid_genes$gene_symbol)
+print(paste(sum(duplicated_symbols)))
+
+if(sum(duplicated_symbols) > 0) {
+  
+  dup_symbols <- unique(valid_genes$gene_symbol[duplicated_symbols])
+  print("Gene symbols that appear several times")
+  print(dup_symbols)
+  print("\nDetail of the genes with duplicated symbols")
+  for(symbol in dup_symbols[1:min(5, length(dup_symbols))]) {  
+    dup_genes <- valid_genes[valid_genes$gene_symbol == symbol, ]
+    print(paste("Symbol:", symbol))
+    print(dup_genes[, c("ensembl_id_original", "gene_symbol", "description")])
+    print("---")
+  }
+}
+
+#Only keep the first gene symbol
+valid_genes_unique <- valid_genes[!duplicated(valid_genes$gene_symbol), ]
+final_valid_genes <- valid_genes_unique
+
+# Filter counts data
+filtered_counts <- raw_counts[final_valid_genes$ensembl_id_original, ]
+
+# Change the name of the row to gene symbols 
+rownames(filtered_counts) <- final_valid_genes$gene_symbol
+
+print(paste("\nDatos filtrados finales: de", nrow(raw_counts), "a", nrow(filtered_counts), "genes"))
+
+# Verify there are no duplicates
+final_duplicates <- sum(duplicated(rownames(filtered_counts)))
+print(paste(final_duplicates))
+
+if(final_duplicates == 0) {
+  print("✅ There are no duplicates in the final data")
+} else {
+  print("❌ Still duplicates- revise the code")
+}
+
+#Verify the structure of the data
+sample_names <- colnames(filtered_counts)
+print(sample_names)
+
+# # Identify the paired structure
+pairs_detected <- data.frame(
+  sample = sample_names,
+  condition = ifelse(grepl("^B", sample_names), "AGA", "SGA"),
+  pair_number = as.numeric(gsub("[BS]", "", sample_names)),
+  stringsAsFactors = FALSE
+)
+
+print(pairs_detected)
+
+# Verify that pairs are correct
+pairs_summary <- table(pairs_detected$pair_number, pairs_detected$condition)
+print(pairs_summary)
+
+# Save results
+    # Complete mapping table
+write.table(mapping_table, "adipo_ensembl_to_symbol_mapping.txt", sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+    # Data filtered with gene symbols
+write.csv(filtered_counts, "adipo_counts_with_gene_symbols.txt", sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+   # Genes successfully converted
+write.csv(final_valid_genes, "adipo_successfully_converted_genes.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+   # Duplicated genes
+write.csv(valid_genes, "adipo_all_valid_genes_with_duplicates.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+   # Genes without gene symbol reference
+write.csv(no_symbols, "adipo_genes_without_symbols.csv", quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+    # Samples information
+write.csv(pairs_detected, "adipo_sample_structure.csv", quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+
+=====================================================================================================================================-
+
+#----------------------------DESEQ ANALYSIS---------------------------------
+
+#Check NA 
+sum(is.na(filtered_counts))
+
+#Discard rows where sum=0
+adipo_Paired_filtered_counts_nonzero<- filtered_counts[rowSums(filtered_counts[ , -1]) > 0, ]
+
+#Filtering low gene expression: at least 10 cpm in 5 samples
+keep <- rowSums(adipo_Paired_filtered_counts_nonzero >= 10) >= 5
+adipo_Paired_filtered_counts_nonzero_counts10_5samples <- adipo_Paired_filtered_counts_nonzero[keep, ]
+View(adipo_Paired_filtered_counts_nonzero_counts10_5samples)
+
+
+# Keep the filtered table as count_matrix
+counts_matrix <- adipo_Paired_filtered_counts_nonzero_counts10_5samples
+
+# Metadata preparation
+        # Extracting columns information 
+        sample_names <- colnames(counts_matrix)
+
+    # Create metadata
+sample_info <- data.frame(
+  sample_id = sample_names,
+  condition = ifelse(grepl("^B", sample_names), "AGA", "SGA"),  # B = AGA, S = SGA
+  twin_pair = as.factor(gsub("[BS]", "", sample_names)),  # Extraer número del par
+  row.names = sample_names
+)
+
+print(sample_info)
+
+# Establish the AGA group as a reference. (SGA vs AGA is + if SGA > AGA)
+sample_info$condition <- sample_info$condition <- factor(sample_info$condition, levels = c("AGA", "SGA"))
+sample_info$twin_pair <- factor(sample_info$twin_pair)
+
+
+#Create the DESe2 object with pair design
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_matrix,
+  colData = sample_info,
+  design = ~ twin_pair + condition
+)
+
+print(paste(nrow(dds)))
+
+#DEG analysis
+
+      #DESeq2 execution
+     dds <- DESeq(dds)
+
+      #Extracting results
+     res <- results(dds, contrast = c("condition", "SGA", "AGA"))
+
+      # Check result`s summary
+      summary(res)
+
+# Sorting the results by their p-adj value (FDR)
+res_ordered <- res[order(res$padj), ]
+
+# Check top 10 genes
+print(head(res_ordered, 10))
+
+#Export the DESeq2 results
+write.table(as.data.frame(res_ordered),file = "adipo_deseq2_results.txt",sep=";",quote=FALSE,row.names=TRUE,col.names=TRUE)
+
+
+#Export normalized counts
+normalized_counts <- counts(dds, normalized = TRUE)
+write.table(normalized_counts, 
+            file = "adipo_normalized_counts.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+======================================================================================================================================================================================================================
+###
+###DATA VISUALIZATION
+###
+
+#-----------------------PCA-----------------------
+
+# Data transformation for visualization 
+vsd <- vst(dds, blind = FALSE)
+
+
+# Data for PCA
+pcaData <- plotPCA(vsd, intgroup = c("condition", "twin_pair"), returnData = TRUE)
+pca <- prcomp(t(assay(vsd)))
+pc_scores <- as.data.frame(pca$x[, 1:3])
+
+
+# Metadata integration: condition and pair twin 
+pc_scores$condition <- colData(vsd)$condition
+pc_scores$twin_pair <- colData(vsd)$twin_pair
+pc_scores$name <- rownames(pc_scores)
+pc_scores$shape <- ifelse(pc_scores$condition == "AGA", "circle", "diamond")
+pc_scores$label <- pc_scores$condition
+
+
+
+# CREAR MAPEO PARA RENUMERAR LOS PARES
+# Par original -> Par nuevo en el gráfico
+# Reorder the pair twin numbers 2-->1, 3-->2, 4-->3, 6-->4, 7-->5)
+pair_mapping <- c("2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
+
+# Apply the mapping to pair_twin 
+pc_scores$twin_pair_display <- pair_mapping[as.character(pc_scores$twin_pair)]
+
+# Convert to factor with levels sorted by new numbering 
+pc_scores$twin_pair_display <- factor(pc_scores$twin_pair_display, levels = c("1", "2", "3", "4", "5"))
+
+# Create labels that include the pair twin number  
+pc_scores$label <- paste0("P", pc_scores$twin_pair_display, "-", pc_scores$condition)
+
+#PCA figure
+
+paleta <- brewer.pal(nlevels(pc_scores$twin_pair), "Set2")
+
+fig <- plot_ly()
+
+for (pair in levels(pc_scores$twin_pair_display)) {
+  aga <- subset(pc_scores, twin_pair_display == pair & condition == "AGA")
+  sga <- subset(pc_scores, twin_pair_display == pair & condition == "SGA")
+  color_idx <- which(levels(pc_scores$twin_pair_display) == pair)
+  fig <- add_trace(
+    fig,
+    data = aga,
+    x = ~PC1, y = ~PC2, z = ~PC3,
+    type = 'scatter3d', mode = 'markers+text',
+    marker = list(symbol = 'circle', size = 10, color = paleta[color_idx]),
+    name = paste0("Pair twin ", pair),  
+    text = ~label, textposition = 'top center', textfont = list(size = 13),
+    showlegend = FALSE,  
+    legendgroup = paste0("Pair twin ", pair)
+  )
+  fig <- add_trace(
+    fig,
+    data = sga,
+    x = ~PC1, y = ~PC2, z = ~PC3,
+    type = 'scatter3d', mode = 'markers+text',
+    marker = list(symbol = 'diamond', size = 10, color = paleta[color_idx]),
+    name = paste0("Pair twin ", pair),  
+    text = ~label, textposition = 'top center', textfont = list(size = 13),
+    showlegend = FALSE,  
+    legendgroup = paste0("Pair twin ", pair)
+  )
+}
+
+fig <- layout(
+  fig,
+  title = list(
+    text = "Adipocyte 3D PCA",
+    y = 0.95,
+    font = list(size = 48)
+  ),
+  scene = list(
+    domain = list(x = c(0, 1)), 
+    xaxis = list(title = "PC1"),
+    yaxis = list(title = "PC2"),
+    zaxis = list(title = "PC3")
+  )
+)
+
+fig
+
+
+
+
+
+#---------------------------------VOLCANO PLOT--------------------------------
+
+
+# Selective labeling
+genes_to_label <- rownames(res)[which(res$padj < 0.05 & !is.na(res$padj))]
+lab_vector <- ifelse(rownames(res) %in% genes_to_label, rownames(res), "")
+
+# Colouring
+pub_colors <- c('gray85', 'gray70', '#2E86AB', '#A23B72')
+
+
+#Volcano Plot figure
+volcano_plot <- EnhancedVolcano(res,
+                                lab = lab_vector,
+                                x = 'log2FoldChange',
+                                y = 'pvalue',
+                                title = 'Adipocyte Volcano Plot',
+                                subtitle = '',
+                                caption = paste0('Total genes = ', nrow(res)),
+                                pCutoff = 0.05,
+                                FCcutoff = 0.5,
+                                pointSize = 1.5,
+                                labSize = 4.0,
+                                labCol = 'black',
+                                labFace = 'bold',
+                                col = pub_colors,
+                                colAlpha = 0.7,
+                                drawConnectors = TRUE,
+                                widthConnectors = 0.3,
+                                colConnectors = 'gray40',
+                                lengthConnectors = unit(0.01, "npc"),
+                                max.overlaps = 20,
+                                min.segment.length = 0.1,
+                                xlim = c(-3, 3),
+                                ylim = c(0, max(-log10(res$pvalue), na.rm = TRUE) * 1.05),
+                                xlab = bquote(~Log[2]~ "fold change"),
+                                ylab = bquote(~-Log[10]~italic(P)~"value"),
+                                legendLabels = c('NS', expression(Log[2]~FC), 
+                                                 'p-value', expression(p-value~and~log[2]~FC)),
+                                legendPosition = 'bottom',
+                                legendLabSize = 40,
+                                legendIconSize = 5.0,
+                                hlineCol = 'gray60',
+                                hlineType = 'dashed',
+                                hlineWidth = 0.5,
+                                vlineCol = 'gray60',
+                                vlineType = 'dashed',
+                                vlineWidth = 0.5,
+                                gridlines.major = TRUE,
+                                gridlines.minor = FALSE,
+                                border = 'full',
+                                borderWidth = 0.8,
+                                borderColour = 'black') +
+  
+  theme(
+    text = element_text(family = "Arial", color = "black"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b = 15)),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    axis.text = element_text(size = 10, color = "black"),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.margin = margin(t = 10),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+    panel.grid.minor = element_blank(),
+    plot.background = element_rect(fill = "white", color = "black", linewidth = 0.5),
+    plot.margin = margin(20, 20, 20, 20),
+    plot.caption = element_text(size = 14, color = "gray50", hjust = 1),
+    aspect.ratio = 1
+  )
+
+
+print(volcano_plot)
+
+
+# Saving the image
+ggsave("adipocyte_plot_publication_square.png", 
+       plot = volcano_plot,
+       width = 10, 
+       height = 10, 
+       dpi = 300,
+       bg = "white")
+
+ggsave("volcano_plot_publication_square.pdf", 
+       plot = volcano_plot,
+       width = 7, 
+       height = 7,
+       device = cairo_pdf)
+
+
+sessionInfo()

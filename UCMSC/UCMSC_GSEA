@@ -1,0 +1,312 @@
+# RNA-Seq analysis: UCMSC samples
+# SGA vs AGA
+# Pipeline creator: Analia Gisela Yogi
+
+
+#----------------------------------Paired GSEA-----------------------------------------------------
+
+#Preparing the data
+res <- results(dds, contrast = c("condition", "SGA", "AGA"))
+gene_list <- res$stat
+names(gene_list) <- rownames(res)
+gene_list <- gene_list[!is.na(gene_list)]
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+
+print(paste(length(gene_list)))
+print(paste(round(min(gene_list), 3), "a", round(max(gene_list), 3)))
+
+# Obtaining relevant sets
+
+#  Retrieving  MSigDB gene sets
+msigdbr_species()  # Ver especies disponibles
+
+# Hallmark pathways 
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+# GO Biological Process 
+go_bp_sets <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+# Reactome pathways
+reactome_sets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:REACTOME") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+# KEGG pathways
+kegg_sets <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+# Filtering the stes according to the hypothesis
+metabolismo_terms <- c(
+  "METABOL", "GLYCOL", "OXID", "LIPID", "GLUCOSE", "FATTY_ACID", 
+  "MITOCHONDR", "RESPIRATORY", "ATP", "ENERGY", "INSULIN"
+)
+
+proliferacion_terms <- c("CELL_CYCLE", "PROLIF", "DIVISION", "G1_S", "G2_M", "MITOTIC",
+                         "DNA_REPLICATION", "CHECKPOINT")
+
+commitment_terms <- c("STEM_CELL", "DIFFERENTI", "LINEAGE", "COMMITMENT", "PLURIPOT",
+                      "HEMATOPOIET", "MESENCHYM", "NEURAL", "ENDOTHEL", "ADIPOG", 
+                      "ADIPOC", "LIPOG", "FAT_CELL", "BROWN_ADIPOSE", "WHITE_ADIPOSE",
+                      "PREADIPOCYTE", "OBESITY", "ADIPOSE_TISSUE")
+
+estres_terms <- c("STRESS_RESPONSE", "OXIDATIVE_STRESS", "ENDOPLASMIC_RETICULUM", "UNFOLDED_PROTEIN", 
+                  "DNA_DAMAGE", "HEAT_SHOCK", "APOPTOSIS", "AUTOPHAGY", "HYPOXIA", "INFLAMMATION")
+
+
+epigenetica_terms <- c(
+  "EPIGENETIC", "EPIGENOME",
+  "METHYLATION", "DNA_METHYLATION", "DEMETHYLATION", "DNA_DEMETHYLATION",
+  "ACETYLATION", "DEACETYLATION",
+  "CHROMATIN", "CHROMATIN_REMODELING", "CHROMATIN_ASSEMBLY", "CHROMATIN_ORGANIZATION",
+  "HISTONE", "HISTONE_MODIFICATION", "HISTONE_ACETYLATION", "HISTONE_METHYLATION",
+  "DNA_MODIFICATION",
+  "NUCLEOSOME", "EPIGENETIC_REGULATION"
+)
+
+white_adipocyte_terms <- c(
+  "WHITE_ADIPOCYTE", 
+  "WHITE_ADIPOSE",
+  "WHITE_ADIPOSE_TISSUE",
+  "WHITE_ADIPOCYTE_DIFFERENTIATION",
+  "ADIPOGENESIS",   
+  "ADIPOSE_TISSUE_DEVELOPMENT",
+  "ADIPOCYTOKINE_SIGNALING_PATHWAY",
+  "LIPOGENESIS", 
+  "PPARG",        
+  "CEBPA",
+  "FABP4",
+  "ADIPOQ",      
+  "LPL", "LIPE", "PLIN1", 
+  "INSULIN_RESPONSE_IN_ADIPOCYTE",
+  "GLUCOSE_UPTAKE_ADIPOCYTE",
+  "ADIPOCYTE_METABOLISM",
+  "ADIPOSE_EXPANSION",
+  "FAT_CELL",     
+  "ADIPOCYTE_FUNCTION"
+)
+# Filtering the data by the terms 
+filter_gene_sets <- function(gene_sets, terms) {
+  pattern <- paste(terms, collapse = "|")
+  filtered <- gene_sets[grepl(pattern, gene_sets$gs_name, ignore.case = TRUE), ]
+  return(filtered)
+}
+
+# Filtering each category
+metabolismo_gs <- filter_gene_sets(go_bp_sets, metabolismo_terms)
+proliferacion_gs <- filter_gene_sets(go_bp_sets, proliferacion_terms)
+commitment_gs <- filter_gene_sets(go_bp_sets, commitment_terms)
+estres_gs <- filter_gene_sets(go_bp_sets, estres_terms)
+epigenetica_gs <- filter_gene_sets(go_bp_sets, epigenetica_terms)
+white_adipocyte_gs <- filter_gene_sets(go_bp_sets, white_adipocyte_terms)
+
+
+# Including terms in Hallmarks, Reactome and KEGG 
+selected_hallmark <- hallmark_sets[grepl(
+  "METABOLISM|PROLIFERATION|STEM|DIFFERENTIATION|STRESS|APOPTOSIS|HYPOXIA|EPIGENETIC|HISTONE|METHYLATION",
+  hallmark_sets$gs_name, ignore.case = TRUE), ]
+
+
+hallmark_pattern <- paste(
+  c(
+    "METABOLISM", "PROLIFERATION", "STEM", "DIFFERENTIATION", 
+    "STRESS", "APOPTOSIS", "HYPOXIA", "EPIGENETIC", "HISTONE", "METHYLATION",
+    white_adipocyte_terms
+  ),
+  collapse = "|"
+)
+
+selected_hallmark <- hallmark_sets[grepl(hallmark_pattern, hallmark_sets$gs_name, ignore.case = TRUE), ]
+
+filtered_reactome <- filter_gene_sets(reactome_sets,
+                                      c(metabolismo_terms, estres_terms, epigenetica_terms,white_adipocyte_terms))
+filtered_kegg <- filter_gene_sets(kegg_sets, 
+                                  c(metabolismo_terms, estres_terms, epigenetica_terms,white_adipocyte_terms))
+
+
+#Combining all sets
+
+all_gene_sets <- rbind(
+  metabolismo_gs,
+  proliferacion_gs,
+  commitment_gs,
+  estres_gs,
+  epigenetica_gs,
+  white_adipocyte_gs,
+  selected_hallmark,
+  filtered_reactome,
+  filtered_kegg
+)
+
+cat(length(unique(all_gene_sets$gs_name)), "\n")
+
+pathways_list <- split(all_gene_sets$gene_symbol, all_gene_sets$gs_name)
+
+
+
+#Executing GSEA
+gene_set_sizes <- sapply(pathways_list, length)
+summary(gene_set_sizes)
+hist(gene_set_sizes, breaks = 50, main = "Gene set size distribution" , xlab = "Number of genes")
+set.seed(42)
+fgsea_results <- fgsea(pathways = pathways_list,
+                       stats = gene_list,
+                       minSize = 10,
+                       maxSize = 300)
+
+# Sort by p-adjusted value (FDR)
+fgsea_results <- fgsea_results[order(fgsea_results$padj), ]
+
+# Retain significant results
+significant_pathways <- fgsea_results[fgsea_results$padj < 0.25, ]
+
+print(paste(nrow(significant_pathways)))
+print(significant_pathways[1:min(10, nrow(significant_pathways)), 
+                           c("pathway", "pval", "padj", "ES", "NES")])
+
+# Sorting the GSEA output
+fgsea_results_ordered <- fgsea_results[order(fgsea_results$padj), ]
+
+
+
+# Exporting the data
+fgsea_results_ordered$leadingEdge <- sapply(fgsea_results_ordered$leadingEdge, toString)
+write.table(fgsea_results_ordered, "fgsea_results_ordered_by_padj_2.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+
+
+#---------------------------------------------- GSEA VISUALIZATION----------------------------------------------------------
+
+# Making pathways more readable
+
+clean_pathway_names <- function(pathway_names, max_chars_per_line = 35) {
+  cleaned <- gsub("^(GOBP_|GOCC_|GOMF_|KEGG_|REACTOME_)", "", pathway_names)
+  cleaned <- gsub("_", " ", cleaned)
+  cleaned <- str_to_title(cleaned)
+  cleaned <- sapply(cleaned, function(name) {
+    if(nchar(name) > max_chars_per_line) {
+      words <- unlist(strsplit(name, " "))
+      if(length(words) > 1) {
+        cumulative_length <- cumsum(nchar(words) + c(0, rep(1, length(words)-1)))
+        split_point <- which(cumulative_length <= max_chars_per_line)
+        if(length(split_point) > 0) {
+          split_point <- max(split_point)
+          line1 <- paste(words[1:split_point], collapse = " ")
+          line2 <- paste(words[(split_point+1):length(words)], collapse = " ")
+          result <- paste(line1, line2, sep = "\n")
+        } else {
+          mid_point <- ceiling(nchar(name)/2)
+          space_positions <- gregexpr(" ", name)[[1]]
+          if(space_positions[1] != -1) {
+            best_split <- space_positions[which.min(abs(space_positions - mid_point))]
+            line1 <- substr(name, 1, best_split - 1)
+            line2 <- substr(name, best_split + 1, nchar(name))
+            result <- paste(line1, line2, sep = "\n")
+          } else {
+            result <- name 
+          }
+        }
+      } else {
+        mid_point <- ceiling(nchar(name)/2)
+        line1 <- substr(name, 1, mid_point)
+        line2 <- substr(name, mid_point + 1, nchar(name))
+        result <- paste(line1, line2, sep = "\n")
+      }
+    } else {
+      result <- name
+    }
+    return(result)
+  }, USE.NAMES = FALSE)
+  
+  return(cleaned)
+}
+
+# Prepare data with clean names divided into two lines 
+significant_pathways <- significant_pathways %>%
+  mutate(
+    logpadj = -log10(padj),
+    pathway_clean = clean_pathway_names(pathway, 35) 
+  )
+
+
+# Separate up-regulated y down-regulated pathways
+up_pathways <- significant_pathways[significant_pathways$NES > 0, ]
+down_pathways <- significant_pathways[significant_pathways$NES < 0, ]
+
+# Picking up the top10 of each group
+n_up <- min(10, nrow(up_pathways))
+n_down <- min(10, nrow(down_pathways))
+
+top_up <- up_pathways[1:n_up, ]
+top_down <- down_pathways[1:n_down, ]
+
+# Combining the data for the plot
+plot_data <- rbind(top_up, top_down)
+n_pathways <- nrow(plot_data)
+
+# Bubble Plot
+p1 <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES))) +
+  geom_point(aes(size = logpadj, color = NES), alpha = 0.8) +
+  scale_color_gradient2(
+    low = "#2166AC", 
+    mid = "white", 
+    high = "#D73027", 
+    midpoint = 0,
+    name = "NES"
+  ) +
+  scale_size_continuous(
+    range = c(3, 8), 
+    name = "-log10(padj)"
+  ) +
+  labs(
+    title = "UCMSC GSEA: SGA vs AGA",
+    subtitle = paste0("Top ", n_up, " up-regulated and top ", n_down, " down-regulated pathways"),
+    x = "Normalized Enrichment Score (NES)",
+    y = ""
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.y = element_text(size = 9, hjust = 1, margin = margin(r = 5), 
+                               lineheight = 0.9), 
+    axis.text.x = element_text(size = 10),
+    plot.margin = margin(15, 15, 15, 140),  
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray60"),
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.margin = margin(l = 20),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "gray90", linewidth = 0.3)
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", alpha = 0.7)
+
+
+print(p1)
+
+# Saving the plot
+plot_width <- 12
+plot_height <- max(8, n_pathways * 0.4)  
+
+ggsave("gsea_UCMSC_sga_vs_aga.png", 
+       plot = p1, 
+       width = plot_width, 
+       height = plot_height, 
+       dpi = 300, 
+       units = "in",
+       bg = "white")
+
+ggsave("gsea_UCMSC_sga_vs_aga.pdf", 
+       plot = p1, 
+       width = plot_width, 
+       height = plot_height, 
+       units = "in",
+       device = cairo_pdf)  
+
+ggsave("gsea_UCMSC_sga_vs_aga.tiff", 
+       plot = p1, 
+       width = plot_width, 
+       height = plot_height, 
+       dpi = 300,
+       units = "in",
+       compression = "lzw") 
+
