@@ -1,19 +1,18 @@
-#
 # RNA-SEQ ANALYSIS PIPELINE: UCMSC SAMPLES
 # Comparison: SGA  vs AGA 
 # Design: Paired analysis (6 twin pairs, 12 samples total)
-# 
+
 # Pipeline outline:
 #   1. Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
 #   2. Differential expression analysis (DESeq2)
 #   3. Principal Component Analysis (3D PCA)
 #   4. Volcano Plot visualization
 #   5. Gene Set Enrichment Analysis (GSEA) - GO:BP
-#
+
 # Author: Analia Yogi
 # Date: January 2026
 
-
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Clear environment
 rm(list = ls())
 gc()
@@ -59,7 +58,7 @@ library(cowplot)
 library(htmlwidgets)
 library(extrafont)
 
--------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #1 DATA PREPROCESSING
 
 # Load raw counts
@@ -176,7 +175,7 @@ write.csv(filtered_counts,
 write.csv(pairs_detected, 
           file.path(OUTPUT_DIR, "UCMSC_sample_structure.csv"), 
           row.names = FALSE)
-----------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #2 DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
 
 #DATA FILTERING
@@ -262,9 +261,7 @@ write.table(normalized_counts,
             col.names = TRUE,
             dec = ".")
 
-
-
------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #3 PRINCIPAL COMPONENT ANALYSIS (3D PCA)
 
 # Variance stabilizing transformation
@@ -464,4 +461,233 @@ ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"),
        plot = volcano_plot, device = "tiff", width = 10, height = 9, 
        dpi = 300, compression = "lzw")
 
-cat("✓ Volcano plot saved\n")
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#5 GENE SET ENRICHMENT ANALYSIS (GSEA)
+
+
+# Create GSEA output directory
+GSEA_DIR <- file.path(OUTPUT_DIR, "GSEA_GO_BP")
+if(!dir.exists(GSEA_DIR)) dir.create(GSEA_DIR, recursive = TRUE)
+
+# GSEA parameters
+MIN_SIZE <- 15
+MAX_SIZE <- 500
+FDR_CUTOFF <- 0.25
+N_TOP <- 10
+
+
+#CREATE GENE RANKING
+
+
+res_gsea <- results(dds, contrast = c("condition", "SGA", "AGA"))
+
+# Rank genes by Wald statistic
+gene_list <- res_gsea$stat
+names(gene_list) <- rownames(res_gsea)
+gene_list <- gene_list[!is.na(gene_list)]
+gene_list <- sort(gene_list, decreasing = TRUE)
+
+ 
+#LOAD GO:BP GENE SETS
+
+
+go_bp_sets <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+pathways_list <- split(go_bp_sets$gene_symbol, go_bp_sets$gs_name)
+
+cat("GO:BP pathways loaded:", length(pathways_list), "\n")
+
+# Filter by size
+sizes <- sapply(pathways_list, length)
+cat("Pathways with", MIN_SIZE, "-", MAX_SIZE, "genes:", 
+    sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE), "\n")
+
+
+#GENE SET SIZE DISTRIBUTION (FOR PARAMETER VALIDATION)
+
+
+# to verify that MIN_SIZE and MAX_SIZE parameters are appropriate for this dataset
+
+# Display histogram in RStudio Plots panel
+hist(sizes, 
+     breaks = 50, 
+     main = "Distribution of GO:BP Gene Set Sizes", 
+     xlab = "Number of genes per pathway",
+     ylab = "Frequency",
+     col = "steelblue",
+     border = "white",
+     las = 1)
+
+abline(v = c(MIN_SIZE, MAX_SIZE), col = "red", lty = 2, lwd = 2)
+
+legend("topright", 
+       legend = c(paste0("Size limits: ", MIN_SIZE, "-", MAX_SIZE, " genes"),
+                  paste0("Pathways in range: ", sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE)),
+                  paste0("Pathways excluded: ", sum(sizes < MIN_SIZE | sizes > MAX_SIZE))),
+       col = c("red", NA, NA), 
+       lty = c(2, NA, NA), 
+       lwd = c(2, NA, NA),
+       bty = "n",
+       cex = 0.9)
+
+  
+
+
+#RUN GSEA
+
+fgsea_results <- fgsea(
+  pathways = pathways_list,
+  stats = gene_list,
+  minSize = MIN_SIZE,
+  maxSize = MAX_SIZE,
+  nproc = 1
+)
+
+fgsea_results <- fgsea_results[order(fgsea_results$padj), ]
+
+# Separate up and down-regulated pathways
+up_pathways <- fgsea_results[fgsea_results$NES > 0, ] %>% arrange(padj)
+down_pathways <- fgsea_results[fgsea_results$NES < 0, ] %>% arrange(padj)
+
+cat("\nResults:\n")
+cat("  Total pathways analyzed:", nrow(fgsea_results), "\n")
+cat("  Significant (FDR <", FDR_CUTOFF, "):", 
+    sum(fgsea_results$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
+cat("    - Up-regulated:", sum(up_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
+cat("    - Down-regulated:", sum(down_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
+
+
+#HELPER FUNCTION FOR PATHWAY NAMES
+
+clean_pathway_names <- function(names, max_chars = 50) {
+  cleaned <- gsub("^GOBP_", "", names)
+  cleaned <- gsub("_", " ", cleaned)
+  cleaned <- tools::toTitleCase(tolower(cleaned))
+  cleaned <- ifelse(nchar(cleaned) > max_chars,
+                    paste0(substr(cleaned, 1, max_chars - 3), "..."),
+                    cleaned)
+  return(cleaned)
+}
+
+#CREATE GSEA BAR PLOT
+
+
+significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
+
+# Top 10 UP (sorted by NES descending)
+top_up <- significant_pathways %>%
+  filter(NES > 0) %>%
+  arrange(desc(NES)) %>%
+  head(N_TOP)
+
+# Top 10 DOWN (sorted by NES ascending)
+top_down <- significant_pathways %>%
+  filter(NES < 0) %>%
+  arrange(NES) %>%
+  head(N_TOP)
+
+# Combine for plotting
+plot_data <- rbind(
+  top_up %>% mutate(direction = "Up"),
+  top_down %>% mutate(direction = "Down")
+) %>%
+  mutate(
+    pathway_clean = clean_pathway_names(pathway, 45),
+    significance = case_when(
+      padj < 0.01 ~ "***",
+      padj < 0.05 ~ "**",
+      padj < 0.1 ~ "*",
+      padj < 0.25 ~ "†",
+      TRUE ~ ""
+    )
+  )
+
+# Create bar plot
+bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill = NES)) +
+  geom_bar(stat = "identity", width = 0.8, color = "black", linewidth = 0.3) +
+  geom_text(aes(label = significance,
+                x = ifelse(NES > 0, NES + 0.08, NES - 0.08)),
+            hjust = ifelse(plot_data$NES > 0, 0, 1),
+            size = 4, fontface = "bold") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#D73027",
+                       midpoint = 0, name = "NES") +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.8) +
+  labs(
+    title = "GSEA: GO Biological Processes (UCMSC)",
+    subtitle = paste0("Top ", N_TOP, " Up-regulated and Down-regulated Pathways in SGA"),
+    x = "Normalized Enrichment Score (NES)",
+    y = "",
+    caption = "†FDR < 0.25, *FDR < 0.1, **FDR < 0.05, ***FDR < 0.01"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray40"),
+    axis.title.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 10, color = "black"),
+    axis.text.x = element_text(size = 10, color = "black"),
+    legend.position = "right",
+    plot.caption = element_text(size = 9, hjust = 1, color = "gray50"),
+    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3)
+  )
+
+# Save bar plot
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"), 
+       bar_plot, width = 12, height = 10, dpi = 300, bg = "white")
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"), 
+       bar_plot, width = 12, height = 10, device = cairo_pdf)
+
+
+
+# EXPORT GSEA RESULTS
+
+# Prepare export data
+fgsea_export <- fgsea_results
+if(is.list(fgsea_export$leadingEdge)) {
+  fgsea_export$leadingEdge <- sapply(fgsea_export$leadingEdge,
+                                     function(x) paste(x, collapse = ", "))
+}
+
+# Export all results
+write.table(fgsea_export[order(fgsea_export$padj), ],
+            file.path(GSEA_DIR, "GSEA_GOBP_Results_All.txt"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+write.csv(fgsea_export[order(fgsea_export$padj), ],
+          file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
+
+# Export top pathways summary
+top_up_export <- top_up
+top_down_export <- top_down
+
+if(is.list(top_up_export$leadingEdge)) {
+  top_up_export$leadingEdge <- sapply(top_up_export$leadingEdge,
+                                      function(x) paste(x, collapse = ", "))
+}
+if(is.list(top_down_export$leadingEdge)) {
+  top_down_export$leadingEdge <- sapply(top_down_export$leadingEdge,
+                                        function(x) paste(x, collapse = ", "))
+}
+
+summary_table <- rbind(
+  top_up_export %>% mutate(Direction = "Up in SGA"),
+  top_down_export %>% mutate(Direction = "Down in SGA")
+) %>%
+  mutate(Pathway_Clean = clean_pathway_names(pathway, 60)) %>%
+  dplyr::select(pathway, Pathway_Clean, Direction, NES, pval, padj, size)
+
+write.csv(summary_table, 
+          file.path(GSEA_DIR, "GSEA_GOBP_Top_Summary.csv"), row.names = FALSE)
+
+# Save R objects
+save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
+     file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
+
+
+# Session info
+sessionInfo()
+
+
+
+
