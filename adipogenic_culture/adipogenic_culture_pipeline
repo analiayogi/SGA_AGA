@@ -650,33 +650,14 @@ save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
 #6 GENE EXPRESSION VISUALIZATION: DLK1, PPARG, FABP4
 
 
-library(ggplot2)
-library(DESeq2)
-library(patchwork)
-
-# CONFIGURATION
-
-
-OUTPUT_DIR <- "Adipocyte_gene_expression"
-if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR)
+# Create subdirectory for gene expression plots
+EXPR_DIR <- file.path(OUTPUT_DIR, "gene_expression")
+if (!dir.exists(EXPR_DIR)) dir.create(EXPR_DIR)
 
 # Genes to plot
 GENES_TO_PLOT <- c("DLK1", "PPARG", "FABP4")
 
-# Twin pair mapping (Adipocyte: 5 pairs)
-PAIR_MAPPING <- c("2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
-
-# Color palette (colorblind-friendly)
-PAIR_COLORS <- c(
-  "1" = "#E41A1C",
-  "2" = "#377EB8",
-  "3" = "#4DAF4A",
-  "4" = "#FF7F00",
-  "5" = "#984EA3"
-)
-
-#CREATE PAIRED EXPRESSION PLOT
-
+# Function to create paired expression plot
 create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
   
   # Get normalized counts
@@ -745,9 +726,6 @@ create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
   return(p)
 }
 
-# GENERATE PLOTS
-
-
 # Ensure size factors are calculated
 dds <- estimateSizeFactors(dds)
 
@@ -764,10 +742,7 @@ for (gene in GENES_TO_PLOT) {
   }
 }
 
-# CREATE COMBINED FIGURE
-
-
-# Legend plot
+# Create legend plot
 legend_plot <- ggplot() +
   annotate("text", x = 0, y = 5, label = "Pair 1", size = 4, color = "#E41A1C", hjust = 0) +
   annotate("text", x = 0, y = 4, label = "Pair 2", size = 4, color = "#377EB8", hjust = 0) +
@@ -787,11 +762,11 @@ combined <- (plot_list[[1]] + plot_list[[2]] + plot_list[[3]] + legend_plot) +
 # Display
 print(combined)
 
-# Save
-ggsave(file.path(OUTPUT_DIR, "Figure_gene_expression_panel.pdf"),
+# Save combined figure
+ggsave(file.path(EXPR_DIR, "Figure_gene_expression_panel.pdf"),
        plot = combined, width = 11, height = 4, device = cairo_pdf)
 
-ggsave(file.path(OUTPUT_DIR, "Figure_gene_expression_panel.tiff"),
+ggsave(file.path(EXPR_DIR, "Figure_gene_expression_panel.tiff"),
        plot = combined, width = 11, height = 4, dpi = 300, compression = "lzw")
 
 
