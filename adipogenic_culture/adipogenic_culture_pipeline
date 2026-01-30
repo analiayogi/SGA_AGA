@@ -1,28 +1,25 @@
-# RNA-SEQ ANALYSIS PIPELINE: ADIPOGENIC CULTURES
-
-# SGA vs AGA 
+# RNA-SEQ ANALYSIS PIPELINE: ADIPOGENIC CULTURE SAMPLES
+# Comparison: SGA vs AGA 
 # Design: Paired analysis (5 twin pairs, 10 samples total)
-# 
-# Pipeline components:
+
+# Pipeline outline:
 #   1. Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
 #   2. Differential expression analysis (DESeq2)
 #   3. Principal Component Analysis (3D PCA)
 #   4. Volcano Plot visualization
 #   5. Gene Set Enrichment Analysis (GSEA) - GO:BP
-#
+
 # Author: Analia Yogi
 # Date: January 2026
 
-
-=======================================================================================================================================================================
+=========================================================================================================================================================================================
 
 # Clear environment
 rm(list = ls())
 gc()
 
-# ============================================================================
+
 # CONFIGURATION
-# ============================================================================
 
 # Output directory
 OUTPUT_DIR <- "Adipocyte_Analysis_Results"
@@ -40,9 +37,8 @@ N_PAIRS <- 5
 # Set seed for reproducibility
 set.seed(42)
 
-# ============================================================================
+
 # LOAD LIBRARIES
-# ============================================================================
 
 library(biomaRt)
 library(dplyr)
@@ -64,9 +60,8 @@ library(cowplot)
 library(htmlwidgets)
 library(extrafont)
 
-# ============================================================================
+=========================================================================================================================================================================================
 # 1. DATA PREPROCESSING
-# ============================================================================
 
 # Load raw counts
 raw_counts <- read.table("adipocyte_raw_counts_paired.csv", 
@@ -175,8 +170,8 @@ write.csv(pairs_detected,
           row.names = FALSE)
 
 # ============================================================================
-# 2. DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
-# ============================================================================
+# 2 DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
+
 
 # Remove genes with zero counts across all samples
 filtered_counts_nonzero <- filtered_counts[rowSums(filtered_counts) > 0, ]
@@ -253,10 +248,9 @@ write.table(normalized_counts,
             row.names = TRUE,
             col.names = TRUE,
             dec = ".")
+=========================================================================================================================================================================================
+#3 PRINCIPAL COMPONENT ANALYSIS (3D PCA)
 
-# ============================================================================
-# 3. PRINCIPAL COMPONENT ANALYSIS (3D PCA)
-# ============================================================================
 
 # Variance stabilizing transformation
 vsd <- vst(dds, blind = FALSE)
@@ -371,11 +365,10 @@ fig <- layout(
 # Save PCA plot
 saveWidget(fig, file.path(OUTPUT_DIR, "Adipocyte_3D_PCA.html"), selfcontained = TRUE)
 
-cat("\n✓ PCA plot saved as HTML\n")
+=========================================================================================================================================================================================
 
-# ============================================================================
-# 4. VOLCANO PLOT
-# ============================================================================
+#4 VOLCANO PLOT
+
 
 # Count significant genes
 significant_genes <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
@@ -454,9 +447,8 @@ ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"),
 
 cat("✓ Volcano plot saved\n")
 
-# ============================================================================
-# 5. GENE SET ENRICHMENT ANALYSIS (GSEA)
-# ============================================================================
+=========================================================================================================================================================================================
+#5 GENE SET ENRICHMENT ANALYSIS (GSEA)
 
 # Create GSEA output directory
 GSEA_DIR <- file.path(OUTPUT_DIR, "GSEA_GO_BP")
@@ -513,32 +505,6 @@ legend("topright",
        bty = "n",
        cex = 0.9)
 
-# Save histogram
-png(file.path(GSEA_DIR, "gene_set_sizes_distribution.png"), 
-    width = 10, height = 6, units = "in", res = 300)
-
-hist(sizes, 
-     breaks = 50, 
-     main = "Distribution of GO:BP Gene Set Sizes", 
-     xlab = "Number of genes per pathway",
-     ylab = "Frequency",
-     col = "steelblue",
-     border = "white",
-     las = 1)
-
-abline(v = c(MIN_SIZE, MAX_SIZE), col = "red", lty = 2, lwd = 2)
-
-legend("topright", 
-       legend = c(paste0("Size limits: ", MIN_SIZE, "-", MAX_SIZE, " genes"),
-                  paste0("Pathways in range: ", sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE)),
-                  paste0("Pathways excluded: ", sum(sizes < MIN_SIZE | sizes > MAX_SIZE))),
-       col = c("red", NA, NA), 
-       lty = c(2, NA, NA), 
-       lwd = c(2, NA, NA),
-       bty = "n",
-       cex = 0.9)
-
-dev.off()
 
 # Run GSEA
 fgsea_results <- fgsea(
@@ -678,47 +644,7 @@ write.csv(summary_table,
 save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
      file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
 
-cat("✓ GSEA results exported\n")
-
-# ============================================================================
-# FINAL SUMMARY
-# ============================================================================
-
-cat("\n")
-cat("╔════════════════════════════════════════════════════════════════════╗\n")
-cat("║                    ANALYSIS COMPLETE                               ║\n")
-cat("╠════════════════════════════════════════════════════════════════════╣\n")
-cat("║                                                                    ║\n")
-cat("║  Dataset: Adipocyte (5 twin pairs, 10 samples)                    ║\n
-")
-cat("║  Output directory:", OUTPUT_DIR, "                                ║\n")
-cat("║                                                                    ║\n")
-cat("║  FILES GENERATED:                                                  ║\n")
-cat("║                                                                    ║\n")
-cat("║  Preprocessing:                                                    ║\n")
-cat("║    - Adipocyte_ensembl_to_symbol_mapping.csv                      ║\n")
-cat("║    - Adipocyte_counts_with_gene_symbols.csv                       ║\n")
-cat("║    - Adipocyte_sample_structure.csv                               ║\n")
-cat("║                                                                    ║\n")
-cat("║  DESeq2:                                                           ║\n")
-cat("║    - Adipocyte_deseq2_results.csv                                 ║\n")
-cat("║    - Adipocyte_deseq2_results.txt                                 ║\n")
-cat("║    - Adipocyte_normalized_counts.txt                              ║\n")
-cat("║                                                                    ║\n")
-cat("║  Visualization:                                                    ║\n")
-cat("║    - Adipocyte_3D_PCA.html                                        ║\n")
-cat("║    - Adipocyte_volcano_plot.png/pdf/tiff                          ║\n")
-cat("║                                                                    ║\n")
-cat("║  GSEA (in GSEA_GO_BP/):                                           ║\n")
-cat("║    - GSEA_GOBP_Barplot.png/pdf                                    ║\n")
-cat("║    - GSEA_GOBP_Results_All.csv/txt                                ║\n")
-cat("║    - GSEA_GOBP_Top_Summary.csv                                    ║\n")
-cat("║    - GSEA_GOBP_Results.RData                                      ║\n")
-cat("║    - gene_set_sizes_distribution.png                              ║\n")
-cat("║                                                                    ║\n")
-cat("╚════════════════════════════════════════════════════════════════════╝\n")
 
 # Session info
 sessionInfo()
 
-cat("\n✅ ANALYSIS COMPLETED SUCCESSFULLY\n\n")
