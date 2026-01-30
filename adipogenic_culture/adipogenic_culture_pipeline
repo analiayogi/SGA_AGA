@@ -3,17 +3,17 @@
 # Design: Paired analysis (5 twin pairs, 10 samples total)
 
 # Pipeline outline:
-#   1. Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
-#   2. Differential expression analysis (DESeq2)
-#   3. Principal Component Analysis (3D PCA)
-#   4. Volcano Plot visualization
-#   5. Gene Set Enrichment Analysis (GSEA) - GO:BP
+#1 Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
+#2 Differential expression analysis (DESeq2)
+#3 Principal Component Analysis (3D PCA)
+#4 Volcano Plot visualization
+#5 Gene Set Enrichment Analysis (GSEA) - GO:BP
+#6 Gene Expression paired
 
 # Author: Analia Yogi
 # Date: January 2026
 
 #=========================================================================================================================================================================================
-
 # Clear environment
 rm(list = ls())
 gc()
@@ -643,6 +643,157 @@ write.csv(summary_table,
 # Save R objects
 save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
      file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
+
+
+
+#=========================================================================================================================================================================================
+#6 GENE EXPRESSION VISUALIZATION: DLK1, PPARG, FABP4
+
+
+library(ggplot2)
+library(DESeq2)
+library(patchwork)
+
+# CONFIGURATION
+
+
+OUTPUT_DIR <- "Adipocyte_gene_expression"
+if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR)
+
+# Genes to plot
+GENES_TO_PLOT <- c("DLK1", "PPARG", "FABP4")
+
+# Twin pair mapping (Adipocyte: 5 pairs)
+PAIR_MAPPING <- c("2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
+
+# Color palette (colorblind-friendly)
+PAIR_COLORS <- c(
+  "1" = "#E41A1C",
+  "2" = "#377EB8",
+  "3" = "#4DAF4A",
+  "4" = "#FF7F00",
+  "5" = "#984EA3"
+)
+
+#CREATE PAIRED EXPRESSION PLOT
+
+create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
+  
+  # Get normalized counts
+  d <- plotCounts(dds, gene = gene_name, intgroup = c("condition", "twin_pair"),
+                  returnData = TRUE)
+  
+  # Prepare data
+  d$Group <- d$condition
+  d$Pair <- factor(pair_mapping[as.character(d$twin_pair)],
+                   levels = c("1", "2", "3", "4", "5"))
+  
+  # Log2 transform
+  d$count <- log2(d$count + 1)
+  
+  # Get p-value from DESeq2
+  p_value <- res[gene_name, "pvalue"]
+  
+  # Format p-value
+  if (is.na(p_value)) {
+    p_text <- "p = NA"
+  } else if (p_value < 0.001) {
+    p_text <- "p < 0.001"
+  } else if (p_value < 0.01) {
+    p_text <- sprintf("p = %.3f", p_value)
+  } else {
+    p_text <- sprintf("p = %.2f", p_value)
+  }
+  
+  # Calculate positions for annotation
+  y_max <- max(d$count)
+  y_range <- max(d$count) - min(d$count)
+  bracket_y <- y_max + (y_range * 0.08)
+  p_text_y <- y_max + (y_range * 0.18)
+  
+  # Create plot
+  p <- ggplot(d, aes(x = Group, y = count)) +
+    geom_line(aes(group = Pair), color = "gray50", linewidth = 0.8,
+              linetype = "dashed", alpha = 0.8) +
+    geom_point(aes(color = Pair, shape = Group), size = 4.5, stroke = 1.2, alpha = 0.9) +
+    scale_color_manual(values = pair_colors) +
+    scale_shape_manual(values = c("SGA" = 18, "AGA" = 16)) +
+    scale_x_discrete(limits = c("SGA", "AGA")) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+    # Significance bracket
+    annotate("segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y,
+             linewidth = 0.5, color = "black") +
+    annotate("segment", x = 1, xend = 1, y = bracket_y, 
+             yend = bracket_y - (y_range * 0.03), linewidth = 0.5, color = "black") +
+    annotate("segment", x = 2, xend = 2, y = bracket_y, 
+             yend = bracket_y - (y_range * 0.03), linewidth = 0.5, color = "black") +
+    annotate("text", x = 1.5, y = p_text_y, label = p_text,
+             size = 4, fontface = "italic", color = "black") +
+    theme_classic(base_size = 11) +
+    theme(
+      plot.title = element_text(size = 12, face = "bold.italic", hjust = 0.5),
+      axis.title.x = element_blank(),
+      axis.title.y = element_text(size = 11, color = "black"),
+      axis.text.x = element_text(size = 11, face = "bold", color = "black"),
+      axis.text.y = element_text(size = 10.5, color = "black"),
+      axis.line = element_line(linewidth = 0.5, color = "black"),
+      legend.position = "none"
+    ) +
+    labs(y = expression(Log[2]*"(normalized counts + 1)")) +
+    ggtitle(gene_name)
+  
+  return(p)
+}
+
+# GENERATE PLOTS
+
+
+# Ensure size factors are calculated
+dds <- estimateSizeFactors(dds)
+
+# Get DESeq2 results
+res <- results(dds, contrast = c("condition", "SGA", "AGA"))
+
+# Create plots for each gene
+plot_list <- list()
+
+for (gene in GENES_TO_PLOT) {
+  if (gene %in% rownames(dds)) {
+    plot_list[[gene]] <- create_paired_plot(gene, dds, res, PAIR_MAPPING, PAIR_COLORS)
+    cat("✓", gene, "- p-value:", format(res[gene, "pvalue"], digits = 3), "\n")
+  }
+}
+
+# CREATE COMBINED FIGURE
+
+
+# Legend plot
+legend_plot <- ggplot() +
+  annotate("text", x = 0, y = 5, label = "Pair 1", size = 4, color = "#E41A1C", hjust = 0) +
+  annotate("text", x = 0, y = 4, label = "Pair 2", size = 4, color = "#377EB8", hjust = 0) +
+  annotate("text", x = 0, y = 3, label = "Pair 3", size = 4, color = "#4DAF4A", hjust = 0) +
+  annotate("text", x = 0, y = 2, label = "Pair 4", size = 4, color = "#FF7F00", hjust = 0) +
+  annotate("text", x = 0, y = 1, label = "Pair 5", size = 4, color = "#984EA3", hjust = 0) +
+  xlim(-0.5, 2) + ylim(0, 6) +
+  theme_void() +
+  theme(plot.margin = margin(40, 5, 5, 5))
+
+# Combine panels
+combined <- (plot_list[[1]] + plot_list[[2]] + plot_list[[3]] + legend_plot) +
+  plot_layout(ncol = 4, widths = c(1, 1, 1, 0.3)) +
+  plot_annotation(tag_levels = list(c('A', 'B', 'C', ''))) &
+  theme(plot.tag = element_text(size = 12, face = "bold"))
+
+# Display
+print(combined)
+
+# Save
+ggsave(file.path(OUTPUT_DIR, "Figure_gene_expression_panel.pdf"),
+       plot = combined, width = 11, height = 4, device = cairo_pdf)
+
+ggsave(file.path(OUTPUT_DIR, "Figure_gene_expression_panel.tiff"),
+       plot = combined, width = 11, height = 4, dpi = 300, compression = "lzw")
+
 
 
 # Session info
