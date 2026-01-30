@@ -1,76 +1,89 @@
-# RNA-Seq analysis: UCMSC samples
-# SGA vs AGA
-# Pipeline creator: Analia Gisela Yogi
+#
+# RNA-SEQ ANALYSIS PIPELINE: UCMSC SAMPLES
+# Comparison: SGA  vs AGA 
+# Design: Paired analysis (6 twin pairs, 12 samples total)
+# 
+# Pipeline outline:
+#   1. Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
+#   2. Differential expression analysis (DESeq2)
+#   3. Principal Component Analysis (3D PCA)
+#   4. Volcano Plot visualization
+#   5. Gene Set Enrichment Analysis (GSEA) - GO:BP
+#
+# Author: Analia Yogi
+# Date: January 2026
 
 
-#----------------PREPARE THE WORKING SPACE---------------------------------------------------------------
-#Set directory:
-setwd(dir="/Users/AnaliaYogi/Desktop/RNAseq_UCMSC_Ana/UCMSC_Paired_Sample6included/UCMSC_DESEq2_Last")
+# Clear environment
+rm(list = ls())
+gc()
+
+# CONFIGURATION
+
+# Output directory
+OUTPUT_DIR <- "UCMSC_Analysis_Results"
+
+if (!dir.exists(OUTPUT_DIR)) {
+  dir.create(OUTPUT_DIR, recursive = TRUE)
+  cat("Directory created:", OUTPUT_DIR, "\n")
+}
+
+# Twin pair mapping (original -> display)
+# Renumbers pairs for cleaner visualization
+PAIR_MAPPING <- c("1" = "6", "2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
+N_PAIRS <- 6
+
+# Set seed for reproducibility
+set.seed(42)
 
 
-# Required libraries
+# LOAD LIBRARIES
+
 library(biomaRt)
 library(dplyr)
 library(ggplot2)
+library(DESeq2)
 library(pheatmap)
 library(RColorBrewer)
-library(dplyr)
-library(fgsea)
-library(stringr)
-
-if (!require("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-
-BiocManager::install("EnhancedVolcano")
-BiocManager::install("DESeq2")
-
 library(EnhancedVolcano)
-library(DESeq2)
-library(plotly)  
-
-if (!require(extrafont)) install.packages("extrafont")
+library(plotly)
+library(patchwork)
+library(fgsea)
+library(msigdbr)
+library(stringr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(htmlwidgets)
 library(extrafont)
-font_import()  
-loadfonts(device = "pdf")
 
-# ------------------LOADING THE DATA INTO THE R ENVIRONMENT/DATA PREPARATION-------------------------------------------
+-------------------------------------------------------------------------------------------
+#1 DATA PREPROCESSING
 
-#Import the data
-raw_counts <- read.table("UCMSC_Paired_includingsample6_raw_counts_20250630.csv", 
+# Load raw counts
+
+raw_counts <- read.table("UCMSC_paired.csv", 
                          header = TRUE, 
                          row.names = 1, 
-                         sep = ";",  
+                         sep = ";",
                          check.names = FALSE)
 
-#Check if there is some na
-sum(is.na(raw_counts))
-
-# Revise if the data was correctly imported
-print(dim(raw_counts))
-print(colnames(raw_counts))
-print(head(raw_counts, 5))
-
-#-----------------------CHANGE ENSEMBLE IDs to GENE SYMBOLS-------------------------------
-
-# Obtaining ENSEMBLE IDs from the rows: 
+# Extract ENSEMBL IDs
 ensembl_ids <- rownames(raw_counts)
+cat("Total genes:", length(ensembl_ids), "\n")
 
-#Check if it was done correctly
-print(paste("total genes", length(ensembl_ids)))
-print(head(ensembl_ids, 10))
-
-# Remove IDs version numbers
+# Remove version numbers from ENSEMBL IDs (e.g., ENSG00000000003.15 -> ENSG00000000003)
 ensembl_ids_clean <- gsub("\\.\\d+$", "", ensembl_ids)
+cat("IDs with version numbers removed:", sum(ensembl_ids != ensembl_ids_clean), "\n")
 
-# Check if there are differences after cleaning up
-different_ids <- sum(ensembl_ids != ensembl_ids_clean)
-print(paste("IDs with version numbers removed:", different_ids))
-
-# Retrieve annotations in a single request
-
-# biomaRt 
+# Connect to biomaRt
+cat("Connecting to biomaRt...\n")
 mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
 
+# Retrieve annotations
+cat("Retrieving annotations...\n")
 annotations <- getBM(
   attributes = c("ensembl_gene_id", "hgnc_symbol", "gene_biotype", "description"),
   filters = "ensembl_gene_id",
@@ -78,19 +91,7 @@ annotations <- getBM(
   mart = mart
 )
 
-print(paste("Anotaciones obtenidas para", nrow(annotations), "genes"))
-
-# Annotations process
-annotations$ensembl_gene_id_original <- ensembl_ids[match(annotations$ensembl_gene_id, ensembl_ids_clean)]
-print(table(annotations$gene_biotype))
-
-# Filtering for valid symbols
-protein_coding <- annotations[annotations$gene_biotype == "protein_coding" & 
-                                annotations$hgnc_symbol != "", ]
-print(paste(nrow(protein_coding)))
-
-
-# Create a mapping table
+# Create mapping table
 mapping_table <- data.frame(
   ensembl_id_original = ensembl_ids,
   ensembl_id_clean = ensembl_ids_clean,
@@ -102,13 +103,13 @@ mapping_table <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Adding annotation information
+# Add annotation information
 for(i in 1:nrow(mapping_table)) {
   ensembl_id <- mapping_table$ensembl_id_clean[i]
   annotation_match <- annotations[annotations$ensembl_gene_id == ensembl_id, ]
   
   if(nrow(annotation_match) > 0) {
-    annotation_match <- annotation_match[1, ] 
+    annotation_match <- annotation_match[1, ]
     mapping_table$gene_symbol[i] <- annotation_match$hgnc_symbol
     mapping_table$gene_biotype[i] <- annotation_match$gene_biotype
     mapping_table$description[i] <- annotation_match$description
@@ -117,57 +118,34 @@ for(i in 1:nrow(mapping_table)) {
   }
 }
 
-
-# Filter for genes protein-coding with valid symbols 
+# Filter for protein-coding genes with valid symbols
 valid_genes <- mapping_table[mapping_table$has_symbol & mapping_table$is_protein_coding, ]
 valid_genes <- valid_genes[!is.na(valid_genes$has_symbol), ]
 
-print(paste(nrow(valid_genes)))
+cat("Protein-coding genes with valid symbols:", nrow(valid_genes), "\n")
 
-# Remove duplicated genes
-duplicated_symbols <- duplicated(valid_genes$gene_symbol)
-print(paste( sum(duplicated_symbols)))
-
-if(sum(duplicated_symbols) > 0) {
-  dup_symbols <- unique(valid_genes$gene_symbol[duplicated_symbols])
-  print("Gene symbols that appear several times:")
-  print(dup_symbols)
-  print("\nDetail of the genes with duplicated symbols")
-  for(symbol in dup_symbols[1:min(5, length(dup_symbols))]) { 
-    dup_genes <- valid_genes[valid_genes$gene_symbol == symbol, ]
-    print(paste("Symbol:", symbol))
-    print(dup_genes[, c("ensembl_id_original", "gene_symbol", "description")])
-    print("---")
-  }
-}
-
-# Only keep the first gene symbol
+# Remove duplicates (keep first occurrence)
 valid_genes_unique <- valid_genes[!duplicated(valid_genes$gene_symbol), ]
-final_valid_genes <- valid_genes_unique
+cat("Unique genes after removing duplicates:", nrow(valid_genes_unique), "\n")
 
 # Filter counts data
-filtered_counts <- raw_counts[final_valid_genes$ensembl_id_original, ]
+filtered_counts <- raw_counts[valid_genes_unique$ensembl_id_original, ]
+rownames(filtered_counts) <- valid_genes_unique$gene_symbol
 
-# Change the name of the row to gene symbols 
-rownames(filtered_counts) <- final_valid_genes$gene_symbol
-
-# Verift there is no duplicates
-final_duplicates <- sum(duplicated(rownames(filtered_counts)))
-print(paste(final_duplicates))
-
-if(final_duplicates == 0) {
-  print("✅ There are no duplicates in the final data")
+# Verify no duplicates remain
+if(sum(duplicated(rownames(filtered_counts))) == 0) {
+  cat("✓ No duplicates in final data\n")
 } else {
-  print("❌ Still duplicates- revise the code")
+  cat("✗ Duplicates still present - check code\n")
 }
 
-
-#Verify the structure of the data
+#SAMPLE STRUCTURE VERIFICATION
 
 sample_names <- colnames(filtered_counts)
-print(sample_names)
 
-# Identify the paired structure
+# Identify paired structure
+# B = AGA (Appropriate for Gestational Age)
+# S = SGA (Small for Gestational Age)
 pairs_detected <- data.frame(
   sample = sample_names,
   condition = ifelse(grepl("^B", sample_names), "AGA", "SGA"),
@@ -177,295 +155,313 @@ pairs_detected <- data.frame(
 
 print(pairs_detected)
 
-# Verify that pairs are correct
+# Verify complete pairs
 pairs_summary <- table(pairs_detected$pair_number, pairs_detected$condition)
+cat("\nPair summary:\n")
 print(pairs_summary)
 
+#SAVE PREPROCESSING RESULTS
 
-# Save results
-       # Complete mapping table
-write.table(mapping_table, "ensembl_to_symbol_mapping.txt", sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+# Save mapping table
+write.csv(mapping_table, 
+          file.path(OUTPUT_DIR, "UCMSC_ensembl_to_symbol_mapping.csv"), 
+          row.names = FALSE)
 
-       # Data filtered with gene symbols
-write.table(filtered_counts, "counts_with_gene_symbols.csv",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+# Save filtered counts with gene symbols
+write.csv(filtered_counts, 
+          file.path(OUTPUT_DIR, "UCMSC_counts_with_gene_symbols.csv"), 
+          row.names = TRUE)
 
-       # Genes successfully converted
-write.table(final_valid_genes, "successfully_converted_genes.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+# Save sample structure
+write.csv(pairs_detected, 
+          file.path(OUTPUT_DIR, "UCMSC_sample_structure.csv"), 
+          row.names = FALSE)
+----------------------------------------------------------------------------------
+#2 DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
 
-        # Duplicated genes
-write.txt(valid_genes, "all_valid_genes_with_duplicates.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+#DATA FILTERING
 
-        # Genes without gene symbol reference
-write.table(no_symbols, "genes_without_symbols.txt",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+# Remove genes with zero counts across all samples
+filtered_counts_nonzero <- filtered_counts[rowSums(filtered_counts) > 0, ]
+cat("Genes after removing zero-count rows:", nrow(filtered_counts_nonzero), "\n")
 
-         # Samples information
-write.txt(pairs_detected, "sample_structure.csv",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+# Filter low expression genes
+# Criterion: at least 10 counts in at least 5 samples
+keep <- rowSums(filtered_counts_nonzero >= 10) >= 5
+counts_matrix <- filtered_counts_nonzero[keep, ]
 
+#CREATE DESeq2 OBJECT
 
-
-=====================================================================================================================================-
-
-#----------------------------DESEQ ANALYSIS---------------------------------
-
-
-#Check NA NA
-sum(is.na(filtered_counts))
-
-
-#Discar rows where sum=0
-UCMSC_Paired_filtered_counts_nonzero<- filtered_counts[rowSums(filtered_counts[ , -1]) > 0, ]
-
-#Filtering low gene expression: at leat 10 cpm in 5 samples
-keep <- rowSums(UCMSC_Paired_filtered_counts_nonzero >= 10) >= 5
-UCMSC_Paired_filtered_counts_nonzero_counts10_5samples <- UCMSC_Paired_filtered_counts_nonzero[keep, ]
-View(UCMSC_Paired_filtered_counts_nonzero_counts10_5samples)
-
-
-
-# Keep the filtered table asncount_matrix
-counts_matrix <- UCMSC_Paired_filtered_counts_nonzero_counts10_5samples
-
-# Metadata preparation
-        # Extracting columns information
-         sample_names <- colnames(counts_matrix)
-
-        # Create metadata
+# Create sample metadata
 sample_info <- data.frame(
-  sample_id = sample_names,
-  condition = ifelse(grepl("^B", sample_names), "AGA", "SGA"),  # B = AGA, S = SGA
-  twin_pair = as.factor(gsub("[BS]", "", sample_names)),  # Extraer número del par
-  row.names = sample_names
+  sample_id = colnames(counts_matrix),
+  condition = ifelse(grepl("^B", colnames(counts_matrix)), "AGA", "SGA"),
+  twin_pair = as.factor(gsub("[BS]", "", colnames(counts_matrix))),
+  row.names = colnames(counts_matrix)
 )
 
-print(sample_info)
-
-# Establish the AGA group as a reference. (SGA vs AGA is + if SGA > AGA)
-sample_info$condition <- sample_info$condition <- factor(sample_info$condition, levels = c("AGA", "SGA"))
+# Set AGA as reference level (so positive log2FC = higher in SGA)
+sample_info$condition <- factor(sample_info$condition, levels = c("AGA", "SGA"))
 sample_info$twin_pair <- factor(sample_info$twin_pair)
 
+cat("\nSample metadata:\n")
+print(sample_info)
 
-#Create the DESe2 object with pair design
-
+# Create DESeq2 object with paired design
+# Design: ~ twin_pair + condition
+# This accounts for within-pair variation (twin_pair as blocking factor)
 dds <- DESeqDataSetFromMatrix(
   countData = counts_matrix,
   colData = sample_info,
   design = ~ twin_pair + condition
 )
 
-print(paste("Retained genes after filtering:", nrow(dds)))
+#RUN DESeq2
 
-#DEG analysis
+cat("\n=== RUNNING DESeq2 ===\n")
 
-     #DESeq2 execution
 dds <- DESeq(dds)
 
-     # Extracting results
+# Extract results
 res <- results(dds, contrast = c("condition", "SGA", "AGA"))
 
-     # Check result`s summary
+# Results summary
+cat("\nResults summary:\n")
 summary(res)
 
-# Sorting the results by their p-adj value (FDR)
+# Order by adjusted p-value
 res_ordered <- res[order(res$padj), ]
 
-# Check top 10 genes
+# Top 10 differentially expressed genes
+cat("\nTop 10 most significant genes:\n")
 print(head(res_ordered, 10))
 
-#Export the DESeq2 results
-write.table(as.data.frame(res_ordered),file = "UCMSC_deseq2_results.txt",sep=";",quote=FALSE,row.names=TRUE,col.names=TRUE)
 
-#Export normalized counts
+#EXPORT DESeq2 RESULTS
 
+# Export all results
+write.csv(as.data.frame(res_ordered),
+          file.path(OUTPUT_DIR, "UCMSC_deseq2_results.csv"),
+          row.names = TRUE)
+
+write.table(as.data.frame(res_ordered),
+            file.path(OUTPUT_DIR, "UCMSC_deseq2_results.txt"),
+            sep = "\t",
+            dec = ".",
+            row.names = TRUE,
+            col.names = NA,
+            quote = FALSE)
+
+# Export normalized counts
 normalized_counts <- counts(dds, normalized = TRUE)
 write.table(normalized_counts, 
-            file = "UCMSC_normalized_counts.txt",sep="\t",quote=FALSE,row.names=TRUE,col.names=TRUE,dec=".")
+            file.path(OUTPUT_DIR, "UCMSC_normalized_counts.txt"),
+            sep = "\t",
+            quote = FALSE,
+            row.names = TRUE,
+            col.names = TRUE,
+            dec = ".")
 
 
-======================================================================================================================================================================================================================
-###
-###DATA VISUALIZATION
-###
 
-#-----------------------PCA-----------------------
+-----------------------------------------------------------------------------------
+#3 PRINCIPAL COMPONENT ANALYSIS (3D PCA)
 
-# Data transformation for visualization 
+# Variance stabilizing transformation
 vsd <- vst(dds, blind = FALSE)
 
-# Data for PCA
-pcaData <- plotPCA(vsd, intgroup = c("condition", "twin_pair"), returnData = TRUE)
+# PCA
 pca <- prcomp(t(assay(vsd)))
-pc_scores <- as.data.frame(pca$x[, 1:3]) 
+pc_scores <- as.data.frame(pca$x[, 1:3])
 
-# Metadata integration: condition and pair twin 
+# Calculate variance explained
+percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+# Add metadata
 pc_scores$condition <- colData(vsd)$condition
 pc_scores$twin_pair <- colData(vsd)$twin_pair
 pc_scores$name <- rownames(pc_scores)
-pc_scores$shape <- ifelse(pc_scores$condition == "AGA", "circle", "diamond")
-pc_scores$label <- pc_scores$condition
 
+# Apply pair mapping for display
+pc_scores$twin_pair_display <- factor(
+  PAIR_MAPPING[as.character(pc_scores$twin_pair)],
+  levels = c("1", "2", "3", "4", "5", "6")
+)
 
+# Color palette for 6 pairs
+pair_colors_pca <- c("#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#984EA3", "#F0E442")
 
-# Reorder the pair twin numbers 1 -> 6, 2 -> 1, 3 -> 2, 4 -> 3, 6 -> 4, 7 -> 5
-pair_mapping <- c("1" = "6", "2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
-
-# Apply the mapping to pair_twin 
-pc_scores$twin_pair_display <- pair_mapping[as.character(pc_scores$twin_pair)]
-
-# Convert to factor with levels sorted by new numbering 
-pc_scores$twin_pair_display <- factor(pc_scores$twin_pair_display, levels = c("1", "2", "3", "4", "5", "6"))
-
-# Create labels that include the pair twin number  
-pc_scores$label <- paste0("P", pc_scores$twin_pair_display, "-", pc_scores$condition)
-
-paleta <- brewer.pal(nlevels(pc_scores$twin_pair), "Set2")
-
-#PCA figure
+# Create 3D plot
 fig <- plot_ly()
 
 for (pair in levels(pc_scores$twin_pair_display)) {
   aga <- subset(pc_scores, twin_pair_display == pair & condition == "AGA")
   sga <- subset(pc_scores, twin_pair_display == pair & condition == "SGA")
   color_idx <- which(levels(pc_scores$twin_pair_display) == pair)
+  
+  # AGA (circles)
   fig <- add_trace(
     fig,
     data = aga,
     x = ~PC1, y = ~PC2, z = ~PC3,
-    type = 'scatter3d', mode = 'markers+text',
-    marker = list(symbol = 'circle', size = 10, color = paleta[color_idx]),
-    name = paste0("Pair twin ", pair),  
-    text = ~label, textposition = 'top center', textfont = list(size = 13),
-    showlegend = FALSE, 
-    legendgroup = paste0("Pair twin ", pair)
+    type = 'scatter3d', mode = 'markers',
+    marker = list(symbol = 'circle', size = 16, color = pair_colors_pca[color_idx], 
+                  line = list(color = 'black', width = 7), opacity = 1),
+    name = paste0("Twin pair ", pair),
+    showlegend = FALSE,
+    legendgroup = paste0("pair_", pair),
+    hovertemplate = paste0('Twin pair ', pair, '<br>AGA<br>',
+                           'PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>')
   )
+  
+  # SGA (diamonds)
   fig <- add_trace(
     fig,
     data = sga,
     x = ~PC1, y = ~PC2, z = ~PC3,
-    type = 'scatter3d', mode = 'markers+text',
-    marker = list(symbol = 'diamond', size = 10, color = paleta[color_idx]),
-    name = paste0("Pair twin ", pair),  
-    text = ~label, textposition = 'top center', textfont = list(size = 13),
+    type = 'scatter3d', mode = 'markers',
+    marker = list(symbol = 'diamond', size = 16, color = pair_colors_pca[color_idx],
+                  line = list(color = 'black', width = 7), opacity = 1),
+    name = paste0("Twin pair ", pair),
     showlegend = FALSE,
-    legendgroup = paste0("Pair twin ", pair)
+    legendgroup = paste0("pair_", pair),
+    hovertemplate = paste0('Twin pair ', pair, '<br>SGA<br>',
+                           'PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>')
   )
 }
 
+# Calculate axis ranges with padding
+pc1_range <- range(pc_scores$PC1)
+pc2_range <- range(pc_scores$PC2)
+pc3_range <- range(pc_scores$PC3)
+padding_factor <- 0.15
 
+# Layout configuration
 fig <- layout(
   fig,
-  title = list(
-    text = "UCMSC 3D PCA",
-    y = 0.95,
-    font = list(size = 48)
-  ),
   scene = list(
-    domain = list(x = c(0, 1)),
-    xaxis = list(title = "PC1"),
-    yaxis = list(title = "PC2"),
-    zaxis = list(title = "PC3")
-  )
+    xaxis = list(
+      title = list(text = paste0("PC1 (", percentVar[1], "%)"), 
+                   font = list(size = 20, color = 'black')),
+      tickfont = list(size = 16, color = 'black'),
+      range = c(pc1_range[1] - diff(pc1_range) * padding_factor, 
+                pc1_range[2] + diff(pc1_range) * padding_factor),
+      showgrid = TRUE,
+      gridcolor = 'rgba(120, 120, 120, 1)',
+      gridwidth = 2
+    ),
+    yaxis = list(
+      title = list(text = paste0("PC2 (", percentVar[2], "%)"), 
+                   font = list(size = 20, color = 'black')),
+      tickfont = list(size = 16, color = 'black'),
+      range = c(pc2_range[1] - diff(pc2_range) * padding_factor, 
+                pc2_range[2] + diff(pc2_range) * padding_factor),
+      showgrid = TRUE,
+      gridcolor = 'rgba(120, 120, 120, 1)',
+      gridwidth = 2
+    ),
+    zaxis = list(
+      title = list(text = paste0("PC3 (", percentVar[3], "%)"), 
+                   font = list(size = 20, color = 'black')),
+      tickfont = list(size = 16, color = 'black'),
+      range = c(pc3_range[1] - diff(pc3_range) * padding_factor, 
+                pc3_range[2] + diff(pc3_range) * padding_factor),
+      showgrid = TRUE,
+      gridcolor = 'rgba(120, 120, 120, 1)',
+      gridwidth = 2
+    ),
+    camera = list(eye = list(x = 1.8, y = 1.8, z = 1.5)),
+    aspectmode = 'cube'
+  ),
+  paper_bgcolor = 'white',
+  plot_bgcolor = 'white'
 )
 
-fig
+# Save PCA plot
+saveWidget(fig, file.path(OUTPUT_DIR, "UCMSC_3D_PCA.html"), selfcontained = TRUE)
 
+cat("\n✓ PCA plot saved as HTML\n")
+cat("  To export as high-resolution image:\n")
+cat("  1. Open the HTML file in a browser\n")
+cat("  2. Adjust the view as desired\n")
+cat("  3. Click the camera icon and select 'Download plot as SVG'\n")
+cat("  4. Open in Adobe Illustrator and export as needed\n")
 
+#VOLCANO PLOT
 
-#---------------------------------VOLCANO PLOT--------------------------------
+# Count significant genes
+significant_genes <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
+cat("Significant genes (padj < 0.05, |log2FC| > 1):", nrow(significant_genes), "\n")
 
-# Selective labeling
-genes_to_label <- rownames(res)[which(res$padj < 0.05 & !is.na(res$padj))]
-lab_vector <- ifelse(rownames(res) %in% genes_to_label, rownames(res), "")
+# Create custom color vector
+keyvals <- ifelse(
+  res$log2FoldChange < -1 & res$pvalue < 0.05, '#0066CC',     # Downregulated (blue)
+  ifelse(res$log2FoldChange > 1 & res$pvalue < 0.05, '#CC0000', # Upregulated (red)
+         ifelse(abs(res$log2FoldChange) > 1, 'gray70',          # FC only
+                'gray80')))                                       # Not significant
 
-# Colouring
-pub_colors <- c('gray85', 'gray70', '#2E86AB', '#A23B72')
+keyvals[is.na(keyvals)] <- 'gray80'
+names(keyvals)[keyvals == '#CC0000'] <- 'Upregulated'
+names(keyvals)[keyvals == '#0066CC'] <- 'Downregulated'
+names(keyvals)[keyvals == 'gray70'] <- 'Log2 FC'
+names(keyvals)[keyvals == 'gray80'] <- 'Not significant'
 
-#Volcano Plot figure
+# Create volcano plot
 volcano_plot <- EnhancedVolcano(res,
-                                lab = lab_vector,
+                                lab = NA,
                                 x = 'log2FoldChange',
                                 y = 'pvalue',
-                                title = 'UCMSC Volcano Plot',
+                                title = 'Differential Gene Expression',
                                 subtitle = '',
-                                caption = paste0('Total genes = ', nrow(res)),
+                                caption = '',
                                 pCutoff = 0.05,
-                                FCcutoff = 0.5,
-                                pointSize = 1.5,
-                                labSize = 4.0,
-                                labCol = 'black',
-                                labFace = 'bold',
-                                col = pub_colors,
-                                colAlpha = 0.7,
-                                drawConnectors = TRUE,
-                                widthConnectors = 0.3,
-                                colConnectors = 'gray40',
-                                lengthConnectors = unit(0.01, "npc"),
-                                max.overlaps = 20,
-                                min.segment.length = 0.1,
-                                xlim = c(-3, 3),
-                                ylim = c(0, max(-log10(res$pvalue), na.rm = TRUE) * 1.05),
-                                xlab = bquote(~Log[2]~ "fold change"),
-                                ylab = bquote(~-Log[10]~italic(P)~"value"),
-                                legendLabels = c('NS', expression(Log[2]~FC), 
-                                                 'p-value', expression(p-value~and~log[2]~FC)),
-                                legendPosition = 'bottom',
-                                legendLabSize = 40,
-                                legendIconSize = 5.0,
-                                hlineCol = 'gray60',
+                                FCcutoff = 1,
+                                pointSize = 3.5,
+                                colCustom = keyvals,
+                                colAlpha = 0.8,
+                                drawConnectors = FALSE,
+                                xlim = c(-4, 4),
+                                ylim = c(0, max(-log10(res$pvalue), na.rm = TRUE) * 1.1),
+                                xlab = bquote(~Log[2]~ "Fold Change"),
+                                ylab = bquote(~-Log[10]~ "(" * italic(P) * "-value)"),
+                                legendPosition = 'right',
+                                legendLabSize = 16,
+                                legendIconSize = 6.0,
+                                hlineCol = 'black',
                                 hlineType = 'dashed',
                                 hlineWidth = 0.5,
-                                vlineCol = 'gray60',
+                                vlineCol = 'black',
                                 vlineType = 'dashed',
                                 vlineWidth = 0.5,
-                                gridlines.major = TRUE,
+                                gridlines.major = FALSE,
                                 gridlines.minor = FALSE,
                                 border = 'full',
-                                borderWidth = 0.8,
+                                borderWidth = 0.75,
                                 borderColour = 'black') +
-  
   theme(
-    text = element_text(family = "Arial", color = "black"),
-    plot.title = element_text(size = 14, face = "bold", hjust = 0.5, margin = margin(b = 15)),
-    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
-    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
-    axis.text = element_text(size = 10, color = "black"),
+    text = element_text(family = "Helvetica", color = "black", face = "bold"),
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 22, face = "bold", margin = margin(t = 15)),
+    axis.title.y = element_text(size = 22, face = "bold", margin = margin(r = 15)),
+    axis.text = element_text(size = 18, color = "black", face = "bold"),
     legend.title = element_blank(),
-    legend.text = element_text(size = 14),
-    legend.position = "bottom",
-    legend.box = "horizontal",
-    legend.margin = margin(t = 10),
-    panel.background = element_rect(fill = "white", color = NA),
-    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-    panel.grid.minor = element_blank(),
-    plot.background = element_rect(fill = "white", color = "black", linewidth = 0.5),
-    plot.margin = margin(20, 20, 20, 20),
-    plot.caption = element_text(size = 14, color = "gray50", hjust = 1),
-    aspect.ratio = 1
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    panel.background = element_rect(fill = "white", color = "black", linewidth = 0.75),
+    panel.grid = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA),
+    aspect.ratio = 0.9
   )
 
+# Save volcano plot
+ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.png"), 
+       plot = volcano_plot, width = 10, height = 9, dpi = 300, bg = "white")
 
-print(volcano_plot)
+ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.pdf"), 
+       plot = volcano_plot, device = "pdf", width = 10, height = 9)
 
-# Saving the image
-ggsave("UCMSC_plot_publication_square.png", 
-       plot = volcano_plot,
-       width = 10, 
-       height = 10, 
-       dpi = 300,
-       bg = "white")
+ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"), 
+       plot = volcano_plot, device = "tiff", width = 10, height = 9, 
+       dpi = 300, compression = "lzw")
 
-ggsave("volcano_plot_publication_square.pdf", 
-       plot = volcano_plot,
-       width = 7, 
-       height = 7,
-       device = cairo_pdf)
-
-
-
-
-
-
-
-
-# Mostrar información de sesión
-sessionInfo()
-
+cat("✓ Volcano plot saved\n")
