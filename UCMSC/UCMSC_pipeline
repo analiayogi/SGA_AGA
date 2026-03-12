@@ -473,7 +473,7 @@ if(!dir.exists(GSEA_DIR)) dir.create(GSEA_DIR, recursive = TRUE)
 # GSEA parameters
 MIN_SIZE <- 15
 MAX_SIZE <- 500
-FDR_CUTOFF <- 0.25
+FDR_CUTOFF <- 0.05
 N_TOP <- 10
 
 
@@ -596,10 +596,9 @@ plot_data <- rbind(
   mutate(
     pathway_clean = clean_pathway_names(pathway, 45),
     significance = case_when(
-      padj < 0.01 ~ "***",
-      padj < 0.05 ~ "**",
-      padj < 0.1 ~ "*",
-      padj < 0.25 ~ "†",
+      padj < 0.001 ~ "***",
+      padj < 0.01 ~ "**",
+      padj < 0.05 ~ "*",
       TRUE ~ ""
     )
   )
@@ -619,7 +618,7 @@ bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill
     subtitle = paste0("Top ", N_TOP, " Up-regulated and Down-regulated Pathways in SGA"),
     x = "Normalized Enrichment Score (NES)",
     y = "",
-    caption = "†FDR < 0.25, *FDR < 0.1, **FDR < 0.05, ***FDR < 0.01"
+    caption = "*FDR < 0.05, **FDR < 0.01, ***FDR < 0.001"
   ) +
   theme_classic(base_size = 12) +
   theme(
