@@ -656,6 +656,15 @@ if (!dir.exists(EXPR_DIR)) dir.create(EXPR_DIR)
 # Genes to plot
 GENES_TO_PLOT <- c("DLK1", "PPARG", "FABP4")
 
+# Pair_colors
+PAIR_COLORS <- c(
+  "1" = "#E41A1C",
+  "2" = "#377EB8",
+  "3" = "#4DAF4A",
+  "4" = "#FF7F00",
+  "5" = "#984EA3"
+)
+
 # Function to create paired expression plot
 create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
   
