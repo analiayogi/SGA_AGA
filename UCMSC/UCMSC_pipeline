@@ -20,7 +20,7 @@ gc()
 # CONFIGURATION
 
 # Output directory
-OUTPUT_DIR <- "UCMSC_Analysis_Results_20260413"
+OUTPUT_DIR <- "UCMSC_analysis_results"
 
 if (!dir.exists(OUTPUT_DIR)) {
   dir.create(OUTPUT_DIR, recursive = TRUE)
@@ -70,7 +70,7 @@ library(extrafont)
 
 # Load raw counts
 
-raw_counts <- read.table("UCMSC_Paired_includingsample6_raw_counts_20250630.csv", 
+raw_counts <- read.table("UCMSC_paired_raw_counts.csv", 
                          header = TRUE, 
                          row.names = 1, 
                          sep = ";",
@@ -470,8 +470,8 @@ ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"),
        plot = volcano_plot, device = "tiff", width = 10, height = 9, 
        dpi = 300, compression = "lzw")
 
-# ============================================================================
-# GSEA GO:BP - UCMSC PAIRED ANALYSIS
+#=========================================================================================================================================================================================
+# 5 GSEA GO:BP - UCMSC PAIRED ANALYSIS
 # Figures for publication: Bar plot (Fig. C) + Leading Edge Heatmap (Fig. D)
 #
 # Input:  dds object (DESeq2, paired design ~ twin_pair + condition)
@@ -481,7 +481,7 @@ ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"),
 #
 # Author: Analia Yogi
 # Data:   DDBJ accession PRJDB40126
-# ============================================================================
+
 
 gc()
 
@@ -513,26 +513,25 @@ library(ComplexHeatmap); library(circlize); library(grid)
 if (!exists("dds")) stop("Object 'dds' not found. Run DESeq2 pipeline first.")
 cat("✓ dds:", nrow(dds), "genes,", ncol(dds), "samples\n")
 
-# ============================================================================
-# 1. GENE RANKING  (Wald statistic, SGA vs AGA)
-# ============================================================================
+
+#  GENE RANKING  (Wald statistic, SGA vs AGA)
+
 res_gsea  <- results(dds, contrast = c("condition", "SGA", "AGA"))
 gene_list <- res_gsea$stat
 names(gene_list) <- rownames(res_gsea)
 gene_list <- sort(gene_list[!is.na(gene_list)], decreasing = TRUE)
 cat("Genes ranked:", length(gene_list), "\n")
 
-# ============================================================================
-# 2. GO:BP GENE SETS
-# ============================================================================
+# GO:BP GENE SETS
+
 go_bp_sets    <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
   dplyr::select(gs_name, gene_symbol)
 pathways_list <- split(go_bp_sets$gene_symbol, go_bp_sets$gs_name)
 cat("GO:BP pathways loaded:", length(pathways_list), "\n")
 
-# ============================================================================
-# 3. RUN GSEA
-# ============================================================================
+
+#  RUN GSEA
+
 fgsea_results <- fgsea(
   pathways = pathways_list,
   stats    = gene_list,
@@ -552,18 +551,17 @@ if (is.list(fgsea_export$leadingEdge))
 write.csv(fgsea_export, file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
 save(fgsea_results, gene_list, file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
 
-# ============================================================================
-# 4. FILTER  (FDR < 0.05)
-# ============================================================================
+
+# FILTER  (FDR < 0.05)
+
 significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
 top_up   <- significant_pathways %>% filter(NES > 0) %>% arrange(desc(NES)) %>% head(N_TOP)
 top_down <- significant_pathways %>% filter(NES < 0) %>% arrange(NES)        %>% head(N_TOP)
 
 cat("Top UP:", nrow(top_up), "| Top DOWN:", nrow(top_down), "\n")
 
-# ============================================================================
-# 5. HELPER: clean pathway names
-# ============================================================================
+# HELPER: clean pathway names
+
 clean_pathway_names <- function(names, max_chars = 50) {
   cleaned <- gsub("^GOBP_", "", names)
   cleaned <- gsub("_", " ", cleaned)
@@ -573,9 +571,9 @@ clean_pathway_names <- function(names, max_chars = 50) {
          cleaned)
 }
 
-# ============================================================================
-# 6. FIGURE C — GSEA BAR PLOT
-# ============================================================================
+
+# FIGURE C — GSEA BAR PLOT
+
 plot_data <- rbind(
   top_up   %>% mutate(direction = "Up"),
   top_down %>% mutate(direction = "Down")
@@ -624,12 +622,12 @@ ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
 cat("✓ Bar plot saved\n")
 
-# ============================================================================
-# 7. FIGURE D — LEADING EDGE HEATMAP (3 panels)
+
+# FIGURE D — LEADING EDGE HEATMAP (3 panels)
 #    LEFT  = Paired Difference SGA(n) - AGA(n)  +  % consistency
 #    MID   = Individual Z-score by sample
 #    RIGHT = Group mean (SGA vs AGA)  +  mean-delta barplot
-# ============================================================================
+
 create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_plot = TRUE) {
   
   # Extract leading edge genes present in dds
