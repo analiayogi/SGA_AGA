@@ -828,3 +828,6 @@ for (i in 1:min(N_TOP_HEATMAP, nrow(top_up))) {
 cat("\n✓ Done. Output folder:", GSEA_DIR, "\n")
 cat("  GSEA_GOBP_Barplot.png/.pdf          -> Figure C\n")
 cat("  heatmaps_leading_edge/UP_01_*.png   -> Figure D\n")
+
+#=========================================================================================================================================================================================
+sessionInfo()
