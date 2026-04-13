@@ -20,7 +20,7 @@ gc()
 # CONFIGURATION
 
 # Output directory
-OUTPUT_DIR <- "UCMSC_Analysis_Results"
+OUTPUT_DIR <- "UCMSC_Analysis_Results_20260413"
 
 if (!dir.exists(OUTPUT_DIR)) {
   dir.create(OUTPUT_DIR, recursive = TRUE)
@@ -30,6 +30,13 @@ if (!dir.exists(OUTPUT_DIR)) {
 # Twin pair mapping (original -> display)
 # Renumbers pairs for cleaner visualization
 PAIR_MAPPING <- c("1" = "6", "2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
+# Unified color palette for twin pairs (used in PCA and heatmaps)
+PAIR_COLORS <- c("1" = "#E41A1C",   # red
+                 "2" = "#377EB8",   # blue
+                 "3" = "#4DAF4A",   # green
+                 "4" = "#FF7F00",   # orange
+                 "5" = "#984EA3",   # purple
+                 "6" = "#F0E442")   # yellow
 N_PAIRS <- 6
 
 # Set seed for reproducibility
@@ -63,7 +70,7 @@ library(extrafont)
 
 # Load raw counts
 
-raw_counts <- read.table("UCMSC_paired.csv", 
+raw_counts <- read.table("UCMSC_Paired_includingsample6_raw_counts_20250630.csv", 
                          header = TRUE, 
                          row.names = 1, 
                          sep = ";",
@@ -287,7 +294,7 @@ pc_scores$twin_pair_display <- factor(
 )
 
 # Color palette for 6 pairs
-pair_colors_pca <- c("#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#984EA3", "#F0E442")
+pair_colors_pca <- unname(PAIR_COLORS)
 
 # Create 3D plot
 fig <- plot_ly()
@@ -463,231 +470,363 @@ ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"),
        plot = volcano_plot, device = "tiff", width = 10, height = 9, 
        dpi = 300, compression = "lzw")
 
-#=========================================================================================================================================================================================
-#5 GENE SET ENRICHMENT ANALYSIS (GSEA)
+# ============================================================================
+# GSEA GO:BP - UCMSC PAIRED ANALYSIS
+# Figures for publication: Bar plot (Fig. C) + Leading Edge Heatmap (Fig. D)
+#
+# Input:  dds object (DESeq2, paired design ~ twin_pair + condition)
+# Output: GSEA_GOBP_UCMSC/
+#           GSEA_GOBP_Barplot.png/.pdf
+#           heatmaps_leading_edge/UP_01_*.png/.pdf
+#
+# Author: Analia Yogi
+# Data:   DDBJ accession PRJDB40126
+# ============================================================================
 
-# Create GSEA output directory
-GSEA_DIR <- file.path(OUTPUT_DIR, "GSEA_GO_BP")
-if(!dir.exists(GSEA_DIR)) dir.create(GSEA_DIR, recursive = TRUE)
+gc()
 
-# GSEA parameters
-MIN_SIZE <- 15
-MAX_SIZE <- 500
-FDR_CUTOFF <- 0.05
-N_TOP <- 10
+# ── Output directories ───────────────────────────────────────────────────────
+GSEA_DIR    <- "GSEA_GOBP_UCMSC"
+HEATMAP_DIR <- file.path(GSEA_DIR, "heatmaps_leading_edge")
+if (!dir.exists(GSEA_DIR))    dir.create(GSEA_DIR,    recursive = TRUE)
+if (!dir.exists(HEATMAP_DIR)) dir.create(HEATMAP_DIR, recursive = TRUE)
 
+# ── Parameters ───────────────────────────────────────────────────────────────
+MIN_SIZE       <- 15     # minimum gene set size for fgsea
+MAX_SIZE       <- 500    # maximum gene set size for fgsea
+FDR_CUTOFF     <- 0.05   # significance threshold
+N_TOP          <- 10     # pathways shown in bar plot (up + down)
+N_TOP_HEATMAP  <- 1      # leading edge heatmaps to generate (top UP)
+CELL_HEIGHT_MM <- 2.5    # row height in heatmap
 
-#CREATE GENE RANKING
+# Twin pair display mapping (original ID -> display label)
+PAIR_MAPPING <- c("1" = "6", "2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
 
+set.seed(42)
 
-res_gsea <- results(dds, contrast = c("condition", "SGA", "AGA"))
+# ── Libraries ─────────────────────────────────────────────────────────────────
+library(DESeq2); library(fgsea); library(msigdbr)
+library(ggplot2); library(dplyr)
+library(ComplexHeatmap); library(circlize); library(grid)
 
-# Rank genes by Wald statistic
+# ── Check dds ────────────────────────────────────────────────────────────────
+if (!exists("dds")) stop("Object 'dds' not found. Run DESeq2 pipeline first.")
+cat("✓ dds:", nrow(dds), "genes,", ncol(dds), "samples\n")
+
+# ============================================================================
+# 1. GENE RANKING  (Wald statistic, SGA vs AGA)
+# ============================================================================
+res_gsea  <- results(dds, contrast = c("condition", "SGA", "AGA"))
 gene_list <- res_gsea$stat
 names(gene_list) <- rownames(res_gsea)
-gene_list <- gene_list[!is.na(gene_list)]
-gene_list <- sort(gene_list, decreasing = TRUE)
+gene_list <- sort(gene_list[!is.na(gene_list)], decreasing = TRUE)
+cat("Genes ranked:", length(gene_list), "\n")
 
- 
-#LOAD GO:BP GENE SETS
-
-
-go_bp_sets <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+# ============================================================================
+# 2. GO:BP GENE SETS
+# ============================================================================
+go_bp_sets    <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
   dplyr::select(gs_name, gene_symbol)
-
 pathways_list <- split(go_bp_sets$gene_symbol, go_bp_sets$gs_name)
-
 cat("GO:BP pathways loaded:", length(pathways_list), "\n")
 
-# Filter by size
-sizes <- sapply(pathways_list, length)
-cat("Pathways with", MIN_SIZE, "-", MAX_SIZE, "genes:", 
-    sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE), "\n")
-
-
-#GENE SET SIZE DISTRIBUTION (FOR PARAMETER VALIDATION)
-
-
-# to verify that MIN_SIZE and MAX_SIZE parameters are appropriate for this dataset
-
-# Display histogram in RStudio Plots panel
-hist(sizes, 
-     breaks = 50, 
-     main = "Distribution of GO:BP Gene Set Sizes", 
-     xlab = "Number of genes per pathway",
-     ylab = "Frequency",
-     col = "steelblue",
-     border = "white",
-     las = 1)
-
-abline(v = c(MIN_SIZE, MAX_SIZE), col = "red", lty = 2, lwd = 2)
-
-legend("topright", 
-       legend = c(paste0("Size limits: ", MIN_SIZE, "-", MAX_SIZE, " genes"),
-                  paste0("Pathways in range: ", sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE)),
-                  paste0("Pathways excluded: ", sum(sizes < MIN_SIZE | sizes > MAX_SIZE))),
-       col = c("red", NA, NA), 
-       lty = c(2, NA, NA), 
-       lwd = c(2, NA, NA),
-       bty = "n",
-       cex = 0.9)
-
-  
-
-
-#RUN GSEA
-
+# ============================================================================
+# 3. RUN GSEA
+# ============================================================================
 fgsea_results <- fgsea(
   pathways = pathways_list,
-  stats = gene_list,
-  minSize = MIN_SIZE,
-  maxSize = MAX_SIZE,
-  nproc = 1
+  stats    = gene_list,
+  minSize  = MIN_SIZE,
+  maxSize  = MAX_SIZE,
+  nproc    = 1
 )
-
 fgsea_results <- fgsea_results[order(fgsea_results$padj), ]
 
-# Separate up and down-regulated pathways
-up_pathways <- fgsea_results[fgsea_results$NES > 0, ] %>% arrange(padj)
-down_pathways <- fgsea_results[fgsea_results$NES < 0, ] %>% arrange(padj)
-
-cat("\nResults:\n")
-cat("  Total pathways analyzed:", nrow(fgsea_results), "\n")
-cat("  Significant (FDR <", FDR_CUTOFF, "):", 
+cat("Significant (FDR <", FDR_CUTOFF, "):",
     sum(fgsea_results$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
-cat("    - Up-regulated:", sum(up_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
-cat("    - Down-regulated:", sum(down_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
 
+# Export full results
+fgsea_export <- fgsea_results
+if (is.list(fgsea_export$leadingEdge))
+  fgsea_export$leadingEdge <- sapply(fgsea_export$leadingEdge, paste, collapse = ", ")
+write.csv(fgsea_export, file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
+save(fgsea_results, gene_list, file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
 
-#HELPER FUNCTION FOR PATHWAY NAMES
+# ============================================================================
+# 4. FILTER  (FDR < 0.05)
+# ============================================================================
+significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
+top_up   <- significant_pathways %>% filter(NES > 0) %>% arrange(desc(NES)) %>% head(N_TOP)
+top_down <- significant_pathways %>% filter(NES < 0) %>% arrange(NES)        %>% head(N_TOP)
 
+cat("Top UP:", nrow(top_up), "| Top DOWN:", nrow(top_down), "\n")
+
+# ============================================================================
+# 5. HELPER: clean pathway names
+# ============================================================================
 clean_pathway_names <- function(names, max_chars = 50) {
   cleaned <- gsub("^GOBP_", "", names)
   cleaned <- gsub("_", " ", cleaned)
   cleaned <- tools::toTitleCase(tolower(cleaned))
-  cleaned <- ifelse(nchar(cleaned) > max_chars,
-                    paste0(substr(cleaned, 1, max_chars - 3), "..."),
-                    cleaned)
-  return(cleaned)
+  ifelse(nchar(cleaned) > max_chars,
+         paste0(substr(cleaned, 1, max_chars - 3), "..."),
+         cleaned)
 }
 
-#CREATE GSEA BAR PLOT
-
-
-significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
-
-# Top 10 UP (sorted by NES descending)
-top_up <- significant_pathways %>%
-  filter(NES > 0) %>%
-  arrange(desc(NES)) %>%
-  head(N_TOP)
-
-# Top 10 DOWN (sorted by NES ascending)
-top_down <- significant_pathways %>%
-  filter(NES < 0) %>%
-  arrange(NES) %>%
-  head(N_TOP)
-
-# Combine for plotting
+# ============================================================================
+# 6. FIGURE C — GSEA BAR PLOT
+# ============================================================================
 plot_data <- rbind(
-  top_up %>% mutate(direction = "Up"),
+  top_up   %>% mutate(direction = "Up"),
   top_down %>% mutate(direction = "Down")
-) %>%
-  mutate(
-    pathway_clean = clean_pathway_names(pathway, 45),
-    significance = case_when(
-      padj < 0.001 ~ "***",
-      padj < 0.01 ~ "**",
-      padj < 0.05 ~ "*",
-      TRUE ~ ""
-    )
+) %>% mutate(
+  pathway_clean = clean_pathway_names(pathway, 45),
+  significance  = case_when(
+    padj < 0.001 ~ "***",
+    padj < 0.01  ~ "**",
+    padj < 0.05  ~ "*",
+    TRUE         ~ ""
   )
+)
 
-# Create bar plot
 bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill = NES)) +
   geom_bar(stat = "identity", width = 0.8, color = "black", linewidth = 0.3) +
-  geom_text(aes(label = significance,
-                x = ifelse(NES > 0, NES + 0.08, NES - 0.08)),
-            hjust = ifelse(plot_data$NES > 0, 0, 1),
-            size = 4, fontface = "bold") +
+  geom_text(
+    aes(label = significance,
+        x     = ifelse(NES > 0, NES + 0.08, NES - 0.08)),
+    hjust     = ifelse(plot_data$NES > 0, 0, 1),
+    size      = 4, fontface = "bold"
+  ) +
   scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#D73027",
                        midpoint = 0, name = "NES") +
   geom_vline(xintercept = 0, color = "black", linewidth = 0.8) +
   labs(
-    title = "GSEA: GO Biological Processes (UCMSC)",
-    subtitle = paste0("Top ", N_TOP, " Up-regulated and Down-regulated Pathways in SGA"),
-    x = "Normalized Enrichment Score (NES)",
-    y = "",
-    caption = "*FDR < 0.05, **FDR < 0.01, ***FDR < 0.001"
+    title    = "GSEA(GO:BP)",
+    x        = "Normalized Enrichment Score (NES)",
+    y        = "",
+    caption  = "*FDR < 0.05   **FDR < 0.01   ***FDR < 0.001"
   ) +
   theme_classic(base_size = 12) +
   theme(
-    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray40"),
-    axis.title.x = element_text(size = 12, face = "bold"),
-    axis.text.y = element_text(size = 10, color = "black"),
-    axis.text.x = element_text(size = 10, color = "black"),
-    legend.position = "right",
-    plot.caption = element_text(size = 9, hjust = 1, color = "gray50"),
-    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3)
+    plot.title       = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x     = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.text.y      = element_text(size = 10, color = "black"),
+    axis.text.x      = element_text(size = 10, color = "black"),
+    legend.position  = "right",
+    plot.caption     = element_text(size = 9, hjust = 1, color = "gray50"),
+    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
+    plot.margin      = margin(20, 20, 20, 20)
   )
 
-# Save bar plot
-ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"), 
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"),
        bar_plot, width = 12, height = 10, dpi = 300, bg = "white")
-ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"), 
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
+cat("✓ Bar plot saved\n")
 
-
-
-# EXPORT GSEA RESULTS
-
-# Prepare export data
-fgsea_export <- fgsea_results
-if(is.list(fgsea_export$leadingEdge)) {
-  fgsea_export$leadingEdge <- sapply(fgsea_export$leadingEdge,
-                                     function(x) paste(x, collapse = ", "))
+# ============================================================================
+# 7. FIGURE D — LEADING EDGE HEATMAP (3 panels)
+#    LEFT  = Paired Difference SGA(n) - AGA(n)  +  % consistency
+#    MID   = Individual Z-score by sample
+#    RIGHT = Group mean (SGA vs AGA)  +  mean-delta barplot
+# ============================================================================
+create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_plot = TRUE) {
+  
+  # Extract leading edge genes present in dds
+  if (is.list(fgsea_row$leadingEdge)) le_genes <- fgsea_row$leadingEdge[[1]]
+  else le_genes <- unlist(strsplit(as.character(fgsea_row$leadingEdge), ", "))
+  le_genes <- le_genes[le_genes %in% rownames(dds_obj)]
+  if (length(le_genes) < 3) { cat("  Warning: too few genes for", pw_name, "\n"); return(NULL) }
+  
+  clean_name <- clean_pathway_names(pw_name, 55)
+  cat("  ->", clean_name, "(n =", length(le_genes), ")\n")
+  
+  # Z-score matrix
+  vsd         <- vst(dds_obj, blind = FALSE)
+  mat_z       <- t(scale(t(assay(vsd)[le_genes, , drop = FALSE])))
+  sample_info <- as.data.frame(colData(dds_obj))
+  sample_info$pair_display <- factor(
+    PAIR_MAPPING[as.character(sample_info$twin_pair)],
+    levels = c("1","2","3","4","5","6")
+  )
+  
+  nes   <- fgsea_row$NES
+  pares <- unique(sample_info$twin_pair)
+  
+  # Consistency: % of pairs with concordant direction
+  consistency <- sapply(le_genes, function(g) {
+    count <- 0
+    for (par in pares) {
+      sga <- rownames(sample_info)[sample_info$twin_pair == par & sample_info$condition == "SGA"]
+      aga <- rownames(sample_info)[sample_info$twin_pair == par & sample_info$condition == "AGA"]
+      if (length(sga) == 1 && length(aga) == 1) {
+        if (nes > 0 && mat_z[g, sga] > mat_z[g, aga]) count <- count + 1
+        if (nes < 0 && mat_z[g, sga] < mat_z[g, aga]) count <- count + 1
+      }
+    }
+    count / length(pares) * 100
+  })
+  
+  gene_order  <- names(sort(consistency, decreasing = TRUE))
+  mat_z       <- mat_z[gene_order, , drop = FALSE]
+  consistency <- consistency[gene_order]
+  
+  # Shared aesthetics
+  pair_colors <- PAIR_COLORS
+  
+  cond_colors <- c("SGA" = "gray20", "AGA" = "gray70")
+  heat_colors <- colorRamp2(c(-2, 0, 2), c("#4575B4", "white", "#D73027"))
+  
+  # ── LEFT: Paired Difference ────────────────────────────────────────────────
+  pares_ord  <- sort(unique(as.character(sample_info$twin_pair)))
+  mat_diff   <- matrix(NA, nrow = length(gene_order), ncol = length(pares_ord),
+                       dimnames = list(gene_order, NULL))
+  for (i in seq_along(pares_ord)) {
+    par   <- pares_ord[i]
+    sga_s <- rownames(sample_info)[sample_info$twin_pair == par & sample_info$condition == "SGA"]
+    aga_s <- rownames(sample_info)[sample_info$twin_pair == par & sample_info$condition == "AGA"]
+    if (length(sga_s) == 1 && length(aga_s) == 1)
+      mat_diff[, i] <- mat_z[, sga_s] - mat_z[, aga_s]
+  }
+  col_ord_diff   <- order(as.numeric(PAIR_MAPPING[pares_ord]))
+  mat_diff       <- mat_diff[, col_ord_diff, drop = FALSE]
+  pares_display  <- PAIR_MAPPING[pares_ord[col_ord_diff]]
+  colnames(mat_diff) <- paste0("P", pares_display)
+  
+  ht_left <- Heatmap(
+    mat_diff, name = "dZ-score", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    top_annotation = HeatmapAnnotation(
+      `Twin Pair` = factor(pares_display, levels = c("1","2","3","4","5","6")),
+      col = list(`Twin Pair` = pair_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_annotation_name = FALSE, show_legend = FALSE
+    ),
+    right_annotation = rowAnnotation(
+      `% pairs` = anno_text(paste0(round(consistency), "%"),
+                            gp = gpar(fontsize = 6), width = unit(0.8, "cm")),
+      show_annotation_name = FALSE
+    ),
+    show_row_names = TRUE, row_names_side = "left",
+    row_names_gp   = gpar(fontsize = 7, fontface = "italic"),
+    column_names_gp = gpar(fontsize = 7), column_names_rot = 45,
+    column_title    = "Paired Difference\nSGA(n) - AGA(n)",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_diff) * 8, "mm"),
+    height = unit(nrow(mat_diff) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE
+  )
+  
+  # ── MIDDLE: Individual expression ─────────────────────────────────────────
+  sample_info$order <- ifelse(sample_info$condition == "SGA", 1, 2)
+  col_ord     <- rownames(sample_info)[order(sample_info$order, sample_info$pair_display)]
+  mat_z_mid   <- mat_z[, col_ord, drop = FALSE]
+  si_ord      <- sample_info[col_ord, ]
+  colnames(mat_z_mid) <- paste0(ifelse(si_ord$condition == "SGA", "S", "A"), si_ord$pair_display)
+  
+  ht_mid <- Heatmap(
+    mat_z_mid, name = "Z-score", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    column_split = factor(si_ord$condition, levels = c("SGA","AGA")),
+    column_gap   = unit(2, "mm"),
+    top_annotation = HeatmapAnnotation(
+      Condition   = si_ord$condition,
+      `Twin Pair` = si_ord$pair_display,
+      col = list(Condition = cond_colors, `Twin Pair` = pair_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_annotation_name = FALSE, show_legend = TRUE
+    ),
+    show_row_names  = FALSE,
+    column_names_gp = gpar(fontsize = 7), column_names_rot = 45,
+    column_title    = "Individual expression",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_z_mid) * 6, "mm"),
+    height = unit(nrow(mat_z_mid) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE
+  )
+  
+  # ── RIGHT: Group Mean + delta barplot ─────────────────────────────────────
+  sga_s      <- rownames(sample_info)[sample_info$condition == "SGA"]
+  aga_s      <- rownames(sample_info)[sample_info$condition == "AGA"]
+  mean_sga   <- rowMeans(mat_z[, sga_s, drop = FALSE])
+  mean_aga   <- rowMeans(mat_z[, aga_s, drop = FALSE])
+  mat_means  <- cbind(SGA = mean_sga, AGA = mean_aga)
+  diff_means <- mean_sga - mean_aga
+  
+  ht_right <- Heatmap(
+    mat_means, name = "Mean Z", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    top_annotation = HeatmapAnnotation(
+      Label = anno_text(c("SGA","AGA"),
+                        gp = gpar(fontsize = 10, fontface = "bold"),
+                        just = "center", rot = 0, height = unit(5, "mm")),
+      Condition = c("SGA","AGA"),
+      col = list(Condition = cond_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_legend = FALSE, show_annotation_name = FALSE, gap = unit(1, "mm")
+    ),
+    right_annotation = rowAnnotation(
+      `Mean d` = anno_barplot(
+        diff_means,
+        gp = gpar(fill = ifelse(diff_means > 0, "#D73027", "#4575B4")),
+        width = unit(1.5, "cm"), border = FALSE,
+        axis_param = list(gp = gpar(fontsize = 6))
+      ),
+      show_annotation_name = FALSE
+    ),
+    show_row_names  = FALSE,
+    column_names_gp = gpar(fontsize = 8),
+    column_title    = "Group mean Difference",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_means) * 10, "mm"),
+    height = unit(nrow(mat_means) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE
+  )
+  
+  # ── Combine and save ───────────────────────────────────────────────────────
+  ht_list    <- ht_left + ht_mid + ht_right
+  title_text <- paste0("GO:BP ", clean_name,
+                       " (", length(gene_order), " leading-edge genes)\n",
+                       ifelse(nes > 0, "Up", "Down"), " in SGA",
+                       "  |  NES = ", sprintf("%.2f", nes),
+                       "  |  FDR = ", sprintf("%.2e", fgsea_row$padj))
+  w <- 18
+  h <- max(5, length(gene_order) * 0.15 + 3)
+  
+  .draw <- function() draw(
+    ht_list,
+    column_title     = title_text,
+    column_title_gp  = gpar(fontsize = 11, fontface = "bold"),
+    gap              = unit(4, "mm"),
+    heatmap_legend_side    = "right",
+    annotation_legend_side = "right",
+    padding          = unit(c(10, 10, 10, 15), "mm")
+  )
+  
+  if (show_plot) { .draw(); Sys.sleep(0.5) }
+  
+  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 300)
+  .draw(); dev.off()
+  
+  pdf(paste0(output_prefix, ".pdf"), width = w, height = h)
+  .draw(); dev.off()
+  
+  return(TRUE)
 }
 
-# Export all results
-write.table(fgsea_export[order(fgsea_export$padj), ],
-            file.path(GSEA_DIR, "GSEA_GOBP_Results_All.txt"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
-
-write.csv(fgsea_export[order(fgsea_export$padj), ],
-          file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
-
-# Export top pathways summary
-top_up_export <- top_up
-top_down_export <- top_down
-
-if(is.list(top_up_export$leadingEdge)) {
-  top_up_export$leadingEdge <- sapply(top_up_export$leadingEdge,
-                                      function(x) paste(x, collapse = ", "))
-}
-if(is.list(top_down_export$leadingEdge)) {
-  top_down_export$leadingEdge <- sapply(top_down_export$leadingEdge,
-                                        function(x) paste(x, collapse = ", "))
+# ── Run heatmaps ─────────────────────────────────────────────────────────────
+cat("\n=== LEADING EDGE HEATMAPS ===\n")
+for (i in 1:min(N_TOP_HEATMAP, nrow(top_up))) {
+  pw     <- top_up$pathway[i]
+  prefix <- file.path(HEATMAP_DIR,
+                      paste0("UP_", sprintf("%02d", i), "_",
+                             gsub("[^A-Za-z0-9]", "_", substr(pw, 6, 50))))
+  tryCatch(
+    create_le_heatmap(pw, top_up[i, ], dds, prefix),
+    error = function(e) cat("  ✗", pw, ":", e$message, "\n")
+  )
 }
 
-summary_table <- rbind(
-  top_up_export %>% mutate(Direction = "Up in SGA"),
-  top_down_export %>% mutate(Direction = "Down in SGA")
-) %>%
-  mutate(Pathway_Clean = clean_pathway_names(pathway, 60)) %>%
-  dplyr::select(pathway, Pathway_Clean, Direction, NES, pval, padj, size)
-
-write.csv(summary_table, 
-          file.path(GSEA_DIR, "GSEA_GOBP_Top_Summary.csv"), row.names = FALSE)
-
-# Save R objects
-save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
-     file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
-
-
-# Session info
-sessionInfo()
-
-
-
-
+cat("\n✓ Done. Output folder:", GSEA_DIR, "\n")
+cat("  GSEA_GOBP_Barplot.png/.pdf          -> Figure C\n")
+cat("  heatmaps_leading_edge/UP_01_*.png   -> Figure D\n")
