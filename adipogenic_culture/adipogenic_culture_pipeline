@@ -1,57 +1,66 @@
 # RNA-SEQ ANALYSIS PIPELINE: ADIPOGENIC CULTURE SAMPLES
-# Comparison: SGA vs AGA 
+# Comparison: SGA vs AGA
 # Design: Paired analysis (5 twin pairs, 10 samples total)
-
+#
 # Pipeline outline:
-#1 Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
-#2 Differential expression analysis (DESeq2)
-#3 Principal Component Analysis (3D PCA)
-#4 Volcano Plot visualization
-#5 Gene Set Enrichment Analysis (GSEA) - GO:BP
-#6 Gene Expression paired
-
+#   1. Data preprocessing and gene annotation (ENSEMBL to Gene Symbol)
+#   2. Differential expression analysis (DESeq2)
+#   3. Principal Component Analysis (3D PCA)          -> Figure B
+#   4. Volcano Plot visualization                     -> Figure C
+#   5. Gene Set Enrichment Analysis (GSEA) - GO:BP    -> Figure D + E
+#   6. Gene expression plots: DLK1, PPARG, FABP4      -> Figure 4
+#
+# Note: 5 of the original 6 UCMSC twin pairs were used for adipogenic
+#       differentiation (pair 1 excluded). PAIR_MAPPING renumbers
+#       original IDs (2,3,4,6,7) to display labels (1,2,3,4,5).
+#
 # Author: Analia Yogi
-# Date: January 2026
+# Date:   January 2026
+# Data:   DDBJ accession PRJDB40126
 
-#=========================================================================================================================================================================================
+#=============================================================================
 # Clear environment
 rm(list = ls())
 gc()
 
-
+#=============================================================================
 # CONFIGURATION
 
-# Output directory
-OUTPUT_DIR <- "Adipocyte_Analysis_Results"
 
+OUTPUT_DIR <- "Adipocyte_Analysis_Results_20260413"
 if (!dir.exists(OUTPUT_DIR)) {
   dir.create(OUTPUT_DIR, recursive = TRUE)
   cat("Directory created:", OUTPUT_DIR, "\n")
 }
 
-# Twin pair mapping (original -> display)
-# Adipocyte dataset has 5 pairs (no pair 1)
+# Twin pair mapping: original sample IDs -> display labels
+# Adipocyte dataset uses pairs 2,3,4,6,7 (pair 1 not differentiated)
 PAIR_MAPPING <- c("2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
 N_PAIRS <- 5
 
-# Set seed for reproducibility
+# Unified color palette for twin pairs (used in PCA, heatmap, gene expression)
+PAIR_COLORS <- c("1" = "#E41A1C",   # red
+                 "2" = "#377EB8",   # blue
+                 "3" = "#4DAF4A",   # green
+                 "4" = "#FF7F00",   # orange
+                 "5" = "#984EA3")   # purple
+
 set.seed(42)
 
-
+#=============================================================================
 # LOAD LIBRARIES
+
 
 library(biomaRt)
 library(dplyr)
 library(ggplot2)
 library(DESeq2)
-library(pheatmap)
 library(RColorBrewer)
 library(EnhancedVolcano)
 library(plotly)
 library(patchwork)
 library(fgsea)
 library(msigdbr)
-library(stringr)
 library(ComplexHeatmap)
 library(circlize)
 library(grid)
@@ -60,648 +69,597 @@ library(cowplot)
 library(htmlwidgets)
 library(extrafont)
 
-#=========================================================================================================================================================================================
+#=============================================================================
 # 1. DATA PREPROCESSING
+#=============================================================================
 
-# Load raw counts
-raw_counts <- read.table("adipocyte_raw_counts_paired.csv", 
-                         header = TRUE, 
-                         row.names = 1, 
-                         sep = ";",
+raw_counts <- read.table("adipocyte_raw_counts_paired.csv",
+                         header     = TRUE,
+                         row.names  = 1,
+                         sep        = ";",
                          check.names = FALSE)
 
-# Verify data structure
-cat("\nData dimensions:", dim(raw_counts)[1], "genes x", dim(raw_counts)[2], "samples\n")
+cat("Data dimensions:", dim(raw_counts)[1], "genes x", dim(raw_counts)[2], "samples\n")
 cat("Sample names:", paste(colnames(raw_counts), collapse = ", "), "\n")
-cat("Missing values:", sum(is.na(raw_counts)), "\n")
 
-# Extract ENSEMBL IDs
-ensembl_ids <- rownames(raw_counts)
-cat("Total genes:", length(ensembl_ids), "\n")
-
-# Remove version numbers from ENSEMBL IDs
+# Remove ENSEMBL version numbers (e.g. ENSG00000000003.15 -> ENSG00000000003)
+ensembl_ids       <- rownames(raw_counts)
 ensembl_ids_clean <- gsub("\\.\\d+$", "", ensembl_ids)
+cat("Total genes:", length(ensembl_ids), "\n")
 cat("IDs with version numbers removed:", sum(ensembl_ids != ensembl_ids_clean), "\n")
 
-# Connect to biomaRt
+# Retrieve HGNC annotations via biomaRt
 cat("Connecting to biomaRt...\n")
 mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
-
-# Retrieve annotations
-cat("Retrieving annotations...\n")
 annotations <- getBM(
   attributes = c("ensembl_gene_id", "hgnc_symbol", "gene_biotype", "description"),
-  filters = "ensembl_gene_id",
-  values = ensembl_ids_clean,
-  mart = mart
+  filters    = "ensembl_gene_id",
+  values     = ensembl_ids_clean,
+  mart       = mart
 )
 
-# Create mapping table
+# Build mapping table
 mapping_table <- data.frame(
   ensembl_id_original = ensembl_ids,
-  ensembl_id_clean = ensembl_ids_clean,
-  gene_symbol = NA,
-  gene_biotype = NA,
-  description = NA,
-  has_symbol = FALSE,
-  is_protein_coding = FALSE,
-  stringsAsFactors = FALSE
+  ensembl_id_clean    = ensembl_ids_clean,
+  gene_symbol         = NA,
+  gene_biotype        = NA,
+  description         = NA,
+  has_symbol          = FALSE,
+  is_protein_coding   = FALSE,
+  stringsAsFactors    = FALSE
 )
 
-# Add annotation information
-for(i in 1:nrow(mapping_table)) {
-  ensembl_id <- mapping_table$ensembl_id_clean[i]
-  annotation_match <- annotations[annotations$ensembl_gene_id == ensembl_id, ]
-  
-  if(nrow(annotation_match) > 0) {
-    annotation_match <- annotation_match[1, ]
-    mapping_table$gene_symbol[i] <- annotation_match$hgnc_symbol
-    mapping_table$gene_biotype[i] <- annotation_match$gene_biotype
-    mapping_table$description[i] <- annotation_match$description
-    mapping_table$has_symbol[i] <- annotation_match$hgnc_symbol != ""
-    mapping_table$is_protein_coding[i] <- annotation_match$gene_biotype == "protein_coding"
+for (i in seq_len(nrow(mapping_table))) {
+  m <- annotations[annotations$ensembl_gene_id == mapping_table$ensembl_id_clean[i], ]
+  if (nrow(m) > 0) {
+    m <- m[1, ]
+    mapping_table$gene_symbol[i]       <- m$hgnc_symbol
+    mapping_table$gene_biotype[i]      <- m$gene_biotype
+    mapping_table$description[i]       <- m$description
+    mapping_table$has_symbol[i]        <- m$hgnc_symbol != ""
+    mapping_table$is_protein_coding[i] <- m$gene_biotype == "protein_coding"
   }
 }
 
-# Filter for protein-coding genes with valid symbols
-valid_genes <- mapping_table[mapping_table$has_symbol & mapping_table$is_protein_coding, ]
-valid_genes <- valid_genes[!is.na(valid_genes$has_symbol), ]
-
-cat("Protein-coding genes with valid symbols:", nrow(valid_genes), "\n")
-
-# Remove duplicates (keep first occurrence)
+# Keep protein-coding genes with valid symbols; remove duplicates
+valid_genes        <- mapping_table[mapping_table$has_symbol &
+                                      mapping_table$is_protein_coding &
+                                      !is.na(mapping_table$has_symbol), ]
 valid_genes_unique <- valid_genes[!duplicated(valid_genes$gene_symbol), ]
-cat("Unique genes after removing duplicates:", nrow(valid_genes_unique), "\n")
+cat("Unique protein-coding genes:", nrow(valid_genes_unique), "\n")
 
-# Filter counts data
-filtered_counts <- raw_counts[valid_genes_unique$ensembl_id_original, ]
-rownames(filtered_counts) <- valid_genes_unique$gene_symbol
+filtered_counts             <- raw_counts[valid_genes_unique$ensembl_id_original, ]
+rownames(filtered_counts)   <- valid_genes_unique$gene_symbol
 
-# Verify no duplicates remain
-if(sum(duplicated(rownames(filtered_counts))) == 0) {
+if (sum(duplicated(rownames(filtered_counts))) == 0) {
   cat("✓ No duplicates in final data\n")
 } else {
   cat("✗ Duplicates still present - check code\n")
 }
 
-# Sample structure verification
-sample_names <- colnames(filtered_counts)
-
+# Sample structure
 pairs_detected <- data.frame(
-  sample = sample_names,
-  condition = ifelse(grepl("^B", sample_names), "AGA", "SGA"),
-  pair_number = as.numeric(gsub("[BS]", "", sample_names)),
+  sample     = colnames(filtered_counts),
+  condition  = ifelse(grepl("^B", colnames(filtered_counts)), "AGA", "SGA"),
+  pair_number = as.numeric(gsub("[BS]", "", colnames(filtered_counts))),
   stringsAsFactors = FALSE
 )
-
 print(pairs_detected)
 
-# Save preprocessing results
-write.csv(mapping_table, 
-          file.path(OUTPUT_DIR, "Adipocyte_ensembl_to_symbol_mapping.csv"), 
-          row.names = FALSE)
+# Save preprocessing outputs
+write.csv(mapping_table,    file.path(OUTPUT_DIR, "Adipocyte_ensembl_to_symbol_mapping.csv"), row.names = FALSE)
+write.csv(filtered_counts,  file.path(OUTPUT_DIR, "Adipocyte_counts_with_gene_symbols.csv"),  row.names = TRUE)
+write.csv(pairs_detected,   file.path(OUTPUT_DIR, "Adipocyte_sample_structure.csv"),           row.names = FALSE)
 
-write.csv(filtered_counts, 
-          file.path(OUTPUT_DIR, "Adipocyte_counts_with_gene_symbols.csv"), 
-          row.names = TRUE)
+#=============================================================================
+# 2. DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
+#=============================================================================
 
-write.csv(pairs_detected, 
-          file.path(OUTPUT_DIR, "Adipocyte_sample_structure.csv"), 
-          row.names = FALSE)
-
-#=========================================================================================================================================================================================
-
-# 2 DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
-
-
-# Remove genes with zero counts across all samples
+# Filter: remove zero-count genes; keep genes with >= 10 counts in >= 5 samples
 filtered_counts_nonzero <- filtered_counts[rowSums(filtered_counts) > 0, ]
-cat("Genes after removing zero-count rows:", nrow(filtered_counts_nonzero), "\n")
-
-# Filter low expression genes
-# Criterion: at least 10 counts in at least 5 samples
-keep <- rowSums(filtered_counts_nonzero >= 10) >= 5
+keep          <- rowSums(filtered_counts_nonzero >= 10) >= 5
 counts_matrix <- filtered_counts_nonzero[keep, ]
 cat("Genes after low-expression filtering:", nrow(counts_matrix), "\n")
 
-# Create sample metadata
+# Sample metadata
 sample_info <- data.frame(
-  sample_id = colnames(counts_matrix),
-  condition = ifelse(grepl("^B", colnames(counts_matrix)), "AGA", "SGA"),
-  twin_pair = as.factor(gsub("[BS]", "", colnames(counts_matrix))),
-  row.names = colnames(counts_matrix)
+  sample_id  = colnames(counts_matrix),
+  condition  = ifelse(grepl("^B", colnames(counts_matrix)), "AGA", "SGA"),
+  twin_pair  = as.factor(gsub("[BS]", "", colnames(counts_matrix))),
+  row.names  = colnames(counts_matrix)
 )
-
-# Set AGA as reference level (so positive log2FC = higher in SGA)
 sample_info$condition <- factor(sample_info$condition, levels = c("AGA", "SGA"))
 sample_info$twin_pair <- factor(sample_info$twin_pair)
-
-cat("\nSample metadata:\n")
 print(sample_info)
 
-# Create DESeq2 object with paired design
+# DESeq2 paired design: twin_pair as blocking factor
 dds <- DESeqDataSetFromMatrix(
   countData = counts_matrix,
-  colData = sample_info,
-  design = ~ twin_pair + condition
+  colData   = sample_info,
+  design    = ~ twin_pair + condition
 )
 
-cat("\nDESeq2 object created:", nrow(dds), "genes,", ncol(dds), "samples\n")
-
-# Run DESeq2
 cat("\n=== RUNNING DESeq2 ===\n")
-
 dds <- DESeq(dds)
 
-# Extract results
-res <- results(dds, contrast = c("condition", "SGA", "AGA"))
-
-# Results summary
-cat("\nResults summary:\n")
-summary(res)
-
-# Order by adjusted p-value
+res         <- results(dds, contrast = c("condition", "SGA", "AGA"))
 res_ordered <- res[order(res$padj), ]
 
-# Top 10 differentially expressed genes
+cat("\nResults summary:\n")
+summary(res)
 cat("\nTop 10 most significant genes:\n")
 print(head(res_ordered, 10))
 
-# Export DESeq2 results
+# Export results
 write.csv(as.data.frame(res_ordered),
-          file.path(OUTPUT_DIR, "Adipocyte_deseq2_results.csv"),
-          row.names = TRUE)
-
+          file.path(OUTPUT_DIR, "Adipocyte_deseq2_results.csv"), row.names = TRUE)
 write.table(as.data.frame(res_ordered),
             file.path(OUTPUT_DIR, "Adipocyte_deseq2_results.txt"),
-            sep = "\t",
-            dec = ".",
-            row.names = TRUE,
-            col.names = NA,
-            quote = FALSE)
+            sep = "\t", dec = ".", row.names = TRUE, col.names = NA, quote = FALSE)
 
-# Export normalized counts
 normalized_counts <- counts(dds, normalized = TRUE)
-write.table(normalized_counts, 
+write.table(normalized_counts,
             file.path(OUTPUT_DIR, "Adipocyte_normalized_counts.txt"),
-            sep = "\t",
-            quote = FALSE,
-            row.names = TRUE,
-            col.names = TRUE,
-            dec = ".")
-#=========================================================================================================================================================================================
-#3 PRINCIPAL COMPONENT ANALYSIS (3D PCA)
+            sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE, dec = ".")
 
+#=============================================================================
+# 3. PRINCIPAL COMPONENT ANALYSIS (3D PCA)  ->  Figure B
+#=============================================================================
 
-# Variance stabilizing transformation
-vsd <- vst(dds, blind = FALSE)
-
-# PCA
-pca <- prcomp(t(assay(vsd)))
+vsd       <- vst(dds, blind = FALSE)
+pca       <- prcomp(t(assay(vsd)))
 pc_scores <- as.data.frame(pca$x[, 1:3])
-
-# Calculate variance explained
 percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
 
-# Add metadata
 pc_scores$condition <- colData(vsd)$condition
 pc_scores$twin_pair <- colData(vsd)$twin_pair
-pc_scores$name <- rownames(pc_scores)
 
-# Apply pair mapping for display (5 pairs for Adipocyte)
 pc_scores$twin_pair_display <- factor(
   PAIR_MAPPING[as.character(pc_scores$twin_pair)],
   levels = c("1", "2", "3", "4", "5")
 )
 
-# Color palette for 5 pairs
-pair_colors_pca <- c("#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", "#984EA3")
+# Use PAIR_COLORS (defined in CONFIGURATION) for consistency with heatmap/gene plots
+pair_colors_pca <- unname(PAIR_COLORS)
 
-# Create 3D plot
 fig <- plot_ly()
-
 for (pair in levels(pc_scores$twin_pair_display)) {
-  aga <- subset(pc_scores, twin_pair_display == pair & condition == "AGA")
-  sga <- subset(pc_scores, twin_pair_display == pair & condition == "SGA")
+  aga       <- subset(pc_scores, twin_pair_display == pair & condition == "AGA")
+  sga       <- subset(pc_scores, twin_pair_display == pair & condition == "SGA")
   color_idx <- which(levels(pc_scores$twin_pair_display) == pair)
   
-  # AGA (circles)
-  fig <- add_trace(
-    fig,
-    data = aga,
-    x = ~PC1, y = ~PC2, z = ~PC3,
-    type = 'scatter3d', mode = 'markers',
-    marker = list(symbol = 'circle', size = 16, color = pair_colors_pca[color_idx], 
-                  line = list(color = 'black', width = 7), opacity = 1),
-    name = paste0("Twin pair ", pair),
-    showlegend = FALSE,
-    legendgroup = paste0("pair_", pair),
-    hovertemplate = paste0('Twin pair ', pair, '<br>AGA<br>',
-                           'PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>')
-  )
+  fig <- add_trace(fig, data = aga, x = ~PC1, y = ~PC2, z = ~PC3,
+                   type = 'scatter3d', mode = 'markers',
+                   marker = list(symbol = 'circle', size = 16, color = pair_colors_pca[color_idx],
+                                 line = list(color = 'black', width = 7), opacity = 1),
+                   name = paste0("Twin pair ", pair), showlegend = FALSE,
+                   legendgroup = paste0("pair_", pair),
+                   hovertemplate = paste0('Twin pair ', pair, '<br>AGA<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>'))
   
-  # SGA (diamonds)
-  fig <- add_trace(
-    fig,
-    data = sga,
-    x = ~PC1, y = ~PC2, z = ~PC3,
-    type = 'scatter3d', mode = 'markers',
-    marker = list(symbol = 'diamond', size = 16, color = pair_colors_pca[color_idx],
-                  line = list(color = 'black', width = 7), opacity = 1),
-    name = paste0("Twin pair ", pair),
-    showlegend = FALSE,
-    legendgroup = paste0("pair_", pair),
-    hovertemplate = paste0('Twin pair ', pair, '<br>SGA<br>',
-                           'PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>')
-  )
+  fig <- add_trace(fig, data = sga, x = ~PC1, y = ~PC2, z = ~PC3,
+                   type = 'scatter3d', mode = 'markers',
+                   marker = list(symbol = 'diamond', size = 16, color = pair_colors_pca[color_idx],
+                                 line = list(color = 'black', width = 7), opacity = 1),
+                   name = paste0("Twin pair ", pair), showlegend = FALSE,
+                   legendgroup = paste0("pair_", pair),
+                   hovertemplate = paste0('Twin pair ', pair, '<br>SGA<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>'))
 }
 
-# Calculate axis ranges with padding
-pc1_range <- range(pc_scores$PC1)
-pc2_range <- range(pc_scores$PC2)
-pc3_range <- range(pc_scores$PC3)
+pc1_range <- range(pc_scores$PC1); pc2_range <- range(pc_scores$PC2); pc3_range <- range(pc_scores$PC3)
 padding_factor <- 0.15
 
-# Layout configuration
-fig <- layout(
-  fig,
-  scene = list(
-    xaxis = list(
-      title = list(text = paste0("PC1 (", percentVar[1], "%)"), 
-                   font = list(size = 20, color = 'black')),
-      tickfont = list(size = 16, color = 'black'),
-      range = c(pc1_range[1] - diff(pc1_range) * padding_factor, 
-                pc1_range[2] + diff(pc1_range) * padding_factor),
-      showgrid = TRUE,
-      gridcolor = 'rgba(120, 120, 120, 1)',
-      gridwidth = 2
-    ),
-    yaxis = list(
-      title = list(text = paste0("PC2 (", percentVar[2], "%)"), 
-                   font = list(size = 20, color = 'black')),
-      tickfont = list(size = 16, color = 'black'),
-      range = c(pc2_range[1] - diff(pc2_range) * padding_factor, 
-                pc2_range[2] + diff(pc2_range) * padding_factor),
-      showgrid = TRUE,
-      gridcolor = 'rgba(120, 120, 120, 1)',
-      gridwidth = 2
-    ),
-    zaxis = list(
-      title = list(text = paste0("PC3 (", percentVar[3], "%)"), 
-                   font = list(size = 20, color = 'black')),
-      tickfont = list(size = 16, color = 'black'),
-      range = c(pc3_range[1] - diff(pc3_range) * padding_factor, 
-                pc3_range[2] + diff(pc3_range) * padding_factor),
-      showgrid = TRUE,
-      gridcolor = 'rgba(120, 120, 120, 1)',
-      gridwidth = 2
-    ),
-    camera = list(eye = list(x = 1.8, y = 1.8, z = 1.5)),
-    aspectmode = 'cube'
-  ),
-  paper_bgcolor = 'white',
-  plot_bgcolor = 'white'
-)
+fig <- layout(fig,
+              scene = list(
+                xaxis = list(title = list(text = paste0("PC1 (", percentVar[1], "%)"), font = list(size = 20, color = 'black')),
+                             tickfont = list(size = 16, color = 'black'),
+                             range = c(pc1_range[1] - diff(pc1_range) * padding_factor, pc1_range[2] + diff(pc1_range) * padding_factor),
+                             showgrid = TRUE, gridcolor = 'rgba(120,120,120,1)', gridwidth = 2),
+                yaxis = list(title = list(text = paste0("PC2 (", percentVar[2], "%)"), font = list(size = 20, color = 'black')),
+                             tickfont = list(size = 16, color = 'black'),
+                             range = c(pc2_range[1] - diff(pc2_range) * padding_factor, pc2_range[2] + diff(pc2_range) * padding_factor),
+                             showgrid = TRUE, gridcolor = 'rgba(120,120,120,1)', gridwidth = 2),
+                zaxis = list(title = list(text = paste0("PC3 (", percentVar[3], "%)"), font = list(size = 20, color = 'black')),
+                             tickfont = list(size = 16, color = 'black'),
+                             range = c(pc3_range[1] - diff(pc3_range) * padding_factor, pc3_range[2] + diff(pc3_range) * padding_factor),
+                             showgrid = TRUE, gridcolor = 'rgba(120,120,120,1)', gridwidth = 2),
+                camera = list(eye = list(x = 1.8, y = 1.8, z = 1.5)),
+                aspectmode = 'cube'),
+              paper_bgcolor = 'white', plot_bgcolor = 'white')
 
-# Save PCA plot
 saveWidget(fig, file.path(OUTPUT_DIR, "Adipocyte_3D_PCA.html"), selfcontained = TRUE)
+cat("✓ PCA saved as HTML (export manually from browser as SVG)\n")
 
-#=========================================================================================================================================================================================
-#4 VOLCANO PLOT
+#=============================================================================
+# 4. VOLCANO PLOT  ->  Figure C
+#=============================================================================
 
-
-# Count significant genes
-significant_genes <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
-cat("Significant genes (padj < 0.05, |log2FC| > 1):", nrow(significant_genes), "\n")
-
-# Create custom color vector
 keyvals <- ifelse(
   res$log2FoldChange < -1 & res$pvalue < 0.05, '#0066CC',
   ifelse(res$log2FoldChange > 1 & res$pvalue < 0.05, '#CC0000',
-         ifelse(abs(res$log2FoldChange) > 1, 'gray70',
-                'gray80')))
-
+         ifelse(abs(res$log2FoldChange) > 1, 'gray70', 'gray80')))
 keyvals[is.na(keyvals)] <- 'gray80'
 names(keyvals)[keyvals == '#CC0000'] <- 'Upregulated'
 names(keyvals)[keyvals == '#0066CC'] <- 'Downregulated'
-names(keyvals)[keyvals == 'gray70'] <- 'Log2 FC'
-names(keyvals)[keyvals == 'gray80'] <- 'Not significant'
+names(keyvals)[keyvals == 'gray70']  <- 'Log2 FC'
+names(keyvals)[keyvals == 'gray80']  <- 'Not significant'
 
-# Create volcano plot
 volcano_plot <- EnhancedVolcano(res,
-                                lab = NA,
-                                x = 'log2FoldChange',
-                                y = 'pvalue',
-                                title = 'Differential Gene Expression',
-                                subtitle = '',
-                                caption = '',
-                                pCutoff = 0.05,
-                                FCcutoff = 1,
-                                pointSize = 3.5,
-                                colCustom = keyvals,
-                                colAlpha = 0.8,
+                                lab           = NA,
+                                x             = 'log2FoldChange',
+                                y             = 'pvalue',
+                                title         = 'SGA vs. AGA',
+                                subtitle      = '',
+                                caption       = '',
+                                pCutoff       = 0.05,
+                                FCcutoff      = 1,
+                                pointSize     = 3.5,
+                                colCustom     = keyvals,
+                                colAlpha      = 0.8,
                                 drawConnectors = FALSE,
-                                xlim = c(-4, 4),
-                                ylim = c(0, max(-log10(res$pvalue), na.rm = TRUE) * 1.1),
-                                xlab = bquote(~Log[2]~ "Fold Change"),
-                                ylab = bquote(~-Log[10]~ "(" * italic(P) * "-value)"),
+                                xlim          = c(-4, 4),
+                                ylim          = c(0, max(-log10(res$pvalue), na.rm = TRUE) * 1.1),
+                                xlab          = bquote(~Log[2]~ "Fold Change"),
+                                ylab          = bquote(~-Log[10]~ "(" * italic(P) * "-value)"),
                                 legendPosition = 'right',
-                                legendLabSize = 16,
+                                legendLabSize  = 16,
                                 legendIconSize = 6.0,
-                                hlineCol = 'black',
-                                hlineType = 'dashed',
-                                hlineWidth = 0.5,
-                                vlineCol = 'black',
-                                vlineType = 'dashed',
-                                vlineWidth = 0.5,
-                                gridlines.major = FALSE,
-                                gridlines.minor = FALSE,
-                                border = 'full',
-                                borderWidth = 0.75,
-                                borderColour = 'black') +
+                                hlineCol = 'black', hlineType = 'dashed', hlineWidth = 0.5,
+                                vlineCol = 'black', vlineType = 'dashed', vlineWidth = 0.5,
+                                gridlines.major = FALSE, gridlines.minor = FALSE,
+                                border = 'full', borderWidth = 0.75, borderColour = 'black') +
   theme(
-    text = element_text(family = "Helvetica", color = "black", face = "bold"),
-    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
-    axis.title.x = element_text(size = 22, face = "bold", margin = margin(t = 15)),
-    axis.title.y = element_text(size = 22, face = "bold", margin = margin(r = 15)),
-    axis.text = element_text(size = 18, color = "black", face = "bold"),
-    legend.title = element_blank(),
-    legend.text = element_text(size = 16, face = "bold"),
+    text          = element_text(family = "Helvetica", color = "black", face = "bold"),
+    plot.title    = element_text(size = 24, face = "bold", hjust = 0.5),
+    axis.title.x  = element_text(size = 22, face = "bold", margin = margin(t = 15)),
+    axis.title.y  = element_text(size = 22, face = "bold", margin = margin(r = 15)),
+    axis.text     = element_text(size = 18, color = "black", face = "bold"),
+    legend.title  = element_blank(),
+    legend.text   = element_text(size = 16, face = "bold"),
     legend.position = "right",
     panel.background = element_rect(fill = "white", color = "black", linewidth = 0.75),
-    panel.grid = element_blank(),
-    plot.background = element_rect(fill = "white", color = NA),
-    aspect.ratio = 0.9
+    panel.grid    = element_blank(),
+    plot.background  = element_rect(fill = "white", color = NA),
+    aspect.ratio  = 0.9
   )
 
-# Save volcano plot
-ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.png"), 
-       plot = volcano_plot, width = 10, height = 9, dpi = 300, bg = "white")
-
-ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.pdf"), 
-       plot = volcano_plot, device = "pdf", width = 10, height = 9)
-
-ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"), 
-       plot = volcano_plot, device = "tiff", width = 10, height = 9, 
-       dpi = 300, compression = "lzw")
-
+ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.png"),  volcano_plot, width = 10, height = 9, dpi = 300, bg = "white")
+ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.pdf"),  volcano_plot, width = 10, height = 9, device = "pdf")
+ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"), volcano_plot, width = 10, height = 9, dpi = 300, compression = "lzw")
 cat("✓ Volcano plot saved\n")
 
-#=========================================================================================================================================================================================
-#5 GENE SET ENRICHMENT ANALYSIS (GSEA)
+#=============================================================================
+# 5. GSEA GO:BP  ->  Figure D (bar plot) + Figure E (leading edge heatmap)
+#=============================================================================
 
-# Create GSEA output directory
-GSEA_DIR <- file.path(OUTPUT_DIR, "GSEA_GO_BP")
-if(!dir.exists(GSEA_DIR)) dir.create(GSEA_DIR, recursive = TRUE)
+GSEA_DIR    <- file.path(OUTPUT_DIR, "GSEA_GO_BP")
+HEATMAP_DIR <- file.path(GSEA_DIR,   "heatmaps_leading_edge")
+if (!dir.exists(GSEA_DIR))    dir.create(GSEA_DIR,    recursive = TRUE)
+if (!dir.exists(HEATMAP_DIR)) dir.create(HEATMAP_DIR, recursive = TRUE)
 
-# GSEA parameters
-MIN_SIZE <- 15
-MAX_SIZE <- 500
-FDR_CUTOFF <- 0.05
-N_TOP <- 10
+# ── Parameters ───────────────────────────────────────────────────────────────
+MIN_SIZE       <- 15
+MAX_SIZE       <- 500
+FDR_CUTOFF     <- 0.05
+N_TOP          <- 10    # pathways in bar plot
+N_TOP_HEATMAP  <- 1     # top UP pathway for leading edge heatmap
+CELL_HEIGHT_MM <- 2.5
 
-# Create gene ranking
-res_gsea <- results(dds, contrast = c("condition", "SGA", "AGA"))
-
+# ── Gene ranking (Wald statistic) ────────────────────────────────────────────
+res_gsea  <- results(dds, contrast = c("condition", "SGA", "AGA"))
 gene_list <- res_gsea$stat
 names(gene_list) <- rownames(res_gsea)
-gene_list <- gene_list[!is.na(gene_list)]
-gene_list <- sort(gene_list, decreasing = TRUE)
+gene_list <- sort(gene_list[!is.na(gene_list)], decreasing = TRUE)
+cat("Genes ranked:", length(gene_list), "\n")
 
-cat("Total genes for GSEA:", length(gene_list), "\n")
-
-# Load GO:BP gene sets
-go_bp_sets <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
+# ── GO:BP gene sets ──────────────────────────────────────────────────────────
+go_bp_sets    <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
   dplyr::select(gs_name, gene_symbol)
-
 pathways_list <- split(go_bp_sets$gene_symbol, go_bp_sets$gs_name)
-
 cat("GO:BP pathways loaded:", length(pathways_list), "\n")
 
-# Filter by size
-sizes <- sapply(pathways_list, length)
-cat("Pathways with", MIN_SIZE, "-", MAX_SIZE, "genes:", 
-    sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE), "\n")
-
-# Gene set size distribution (for parameter validation)
-hist(sizes, 
-     breaks = 50, 
-     main = "Distribution of GO:BP Gene Set Sizes", 
-     xlab = "Number of genes per pathway",
-     ylab = "Frequency",
-     col = "steelblue",
-     border = "white",
-     las = 1)
-
-abline(v = c(MIN_SIZE, MAX_SIZE), col = "red", lty = 2, lwd = 2)
-
-legend("topright", 
-       legend = c(paste0("Size limits: ", MIN_SIZE, "-", MAX_SIZE, " genes"),
-                  paste0("Pathways in range: ", sum(sizes >= MIN_SIZE & sizes <= MAX_SIZE)),
-                  paste0("Pathways excluded: ", sum(sizes < MIN_SIZE | sizes > MAX_SIZE))),
-       col = c("red", NA, NA), 
-       lty = c(2, NA, NA), 
-       lwd = c(2, NA, NA),
-       bty = "n",
-       cex = 0.9)
-
-
-# Run GSEA
-fgsea_results <- fgsea(
-  pathways = pathways_list,
-  stats = gene_list,
-  minSize = MIN_SIZE,
-  maxSize = MAX_SIZE,
-  nproc = 1
-)
-
+# ── Run GSEA ─────────────────────────────────────────────────────────────────
+fgsea_results <- fgsea(pathways = pathways_list, stats = gene_list,
+                       minSize = MIN_SIZE, maxSize = MAX_SIZE, nproc = 1)
 fgsea_results <- fgsea_results[order(fgsea_results$padj), ]
 
-# Separate up and down-regulated pathways
-up_pathways <- fgsea_results[fgsea_results$NES > 0, ] %>% arrange(padj)
-down_pathways <- fgsea_results[fgsea_results$NES < 0, ] %>% arrange(padj)
-
-cat("\nResults:\n")
-cat("  Total pathways analyzed:", nrow(fgsea_results), "\n")
-cat("  Significant (FDR <", FDR_CUTOFF, "):", 
+cat("Significant (FDR <", FDR_CUTOFF, "):",
     sum(fgsea_results$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
-cat("    - Up-regulated:", sum(up_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
-cat("    - Down-regulated:", sum(down_pathways$padj < FDR_CUTOFF, na.rm = TRUE), "\n")
 
-# Helper function for pathway names
+# Export full results
+fgsea_export <- fgsea_results
+if (is.list(fgsea_export$leadingEdge))
+  fgsea_export$leadingEdge <- sapply(fgsea_export$leadingEdge, paste, collapse = ", ")
+write.csv(fgsea_export, file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
+write.table(fgsea_export, file.path(GSEA_DIR, "GSEA_GOBP_Results_All.txt"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+save(fgsea_results, gene_list, file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
+
+# ── Filter (FDR < 0.05) ──────────────────────────────────────────────────────
+significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
+top_up   <- significant_pathways %>% filter(NES > 0) %>% arrange(desc(NES)) %>% head(N_TOP)
+top_down <- significant_pathways %>% filter(NES < 0) %>% arrange(NES)        %>% head(N_TOP)
+cat("Top UP:", nrow(top_up), "| Top DOWN:", nrow(top_down), "\n")
+
+# ── Helper: clean pathway names ───────────────────────────────────────────────
 clean_pathway_names <- function(names, max_chars = 50) {
   cleaned <- gsub("^GOBP_", "", names)
   cleaned <- gsub("_", " ", cleaned)
   cleaned <- tools::toTitleCase(tolower(cleaned))
-  cleaned <- ifelse(nchar(cleaned) > max_chars,
-                    paste0(substr(cleaned, 1, max_chars - 3), "..."),
-                    cleaned)
-  return(cleaned)
+  ifelse(nchar(cleaned) > max_chars,
+         paste0(substr(cleaned, 1, max_chars - 3), "..."), cleaned)
 }
 
-# Create GSEA bar plot
-significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
-
-top_up <- significant_pathways %>%
-  filter(NES > 0) %>%
-  arrange(desc(NES)) %>%
-  head(N_TOP)
-
-top_down <- significant_pathways %>%
-  filter(NES < 0) %>%
-  arrange(NES) %>%
-  head(N_TOP)
-
+# ── Figure D: GSEA bar plot ───────────────────────────────────────────────────
 plot_data <- rbind(
-  top_up %>% mutate(direction = "Up"),
+  top_up   %>% mutate(direction = "Up"),
   top_down %>% mutate(direction = "Down")
-) %>%
-  mutate(
-    pathway_clean = clean_pathway_names(pathway, 45),
-    significance = case_when(
-      padj < 0.001 ~ "***",
-      padj < 0.01 ~ "**",
-      padj < 0.05 ~ "*",
-      TRUE ~ ""
-    )
+) %>% mutate(
+  pathway_clean = clean_pathway_names(pathway, 45),
+  significance  = case_when(
+    padj < 0.001 ~ "***", padj < 0.01 ~ "**", padj < 0.05 ~ "*", TRUE ~ ""
   )
+)
 
 bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill = NES)) +
   geom_bar(stat = "identity", width = 0.8, color = "black", linewidth = 0.3) +
   geom_text(aes(label = significance,
-                x = ifelse(NES > 0, NES + 0.08, NES - 0.08)),
-            hjust = ifelse(plot_data$NES > 0, 0, 1),
-            size = 4, fontface = "bold") +
+                x     = ifelse(NES > 0, NES + 0.08, NES - 0.08)),
+            hjust = ifelse(plot_data$NES > 0, 0, 1), size = 4, fontface = "bold") +
   scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#D73027",
                        midpoint = 0, name = "NES") +
   geom_vline(xintercept = 0, color = "black", linewidth = 0.8) +
-  labs(
-    title = "GSEA: GO Biological Processes (Adipocyte)",
-    subtitle = paste0("Top ", N_TOP, " Up-regulated and Down-regulated Pathways in SGA"),
-    x = "Normalized Enrichment Score (NES)",
-    y = "",
-    caption = " *FDR < 0.05, **FDR < 0.01, ***FDR < 0.001"
-  ) +
+  labs(title   = "GSEA(GO:BP)",
+       x       = "Normalized enrichment score\n(NES)",
+       y       = "",
+       caption = "*FDR < 0.05   **FDR < 0.01   ***FDR < 0.001") +
   theme_classic(base_size = 12) +
   theme(
-    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "gray40"),
-    axis.title.x = element_text(size = 12, face = "bold"),
-    axis.text.y = element_text(size = 10, color = "black"),
-    axis.text.x = element_text(size = 10, color = "black"),
-    legend.position = "right",
-    plot.caption = element_text(size = 9, hjust = 1, color = "gray50"),
-    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3)
+    plot.title         = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x       = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.text.y        = element_text(size = 10, color = "black"),
+    axis.text.x        = element_text(size = 10, color = "black"),
+    legend.position    = "right",
+    plot.caption       = element_text(size = 9, hjust = 1, color = "gray50"),
+    panel.grid.major.x = element_line(color = "gray90", linewidth = 0.3),
+    plot.margin        = margin(20, 20, 20, 20)
   )
 
-# Save bar plot
-ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"), 
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"),
        bar_plot, width = 12, height = 10, dpi = 300, bg = "white")
-ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"), 
+ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
-
 cat("✓ GSEA bar plot saved\n")
 
-# Export GSEA results
-fgsea_export <- fgsea_results
-if(is.list(fgsea_export$leadingEdge)) {
-  fgsea_export$leadingEdge <- sapply(fgsea_export$leadingEdge,
-                                     function(x) paste(x, collapse = ", "))
-}
-
-write.table(fgsea_export[order(fgsea_export$padj), ],
-            file.path(GSEA_DIR, "GSEA_GOBP_Results_All.txt"),
-            sep = "\t", quote = FALSE, row.names = FALSE)
-
-write.csv(fgsea_export[order(fgsea_export$padj), ],
-          file.path(GSEA_DIR, "GSEA_GOBP_Results_All.csv"), row.names = FALSE)
-
-# Export top pathways summary
-top_up_export <- top_up
+# Export top pathway summary
+top_up_export   <- top_up
 top_down_export <- top_down
-
-if(is.list(top_up_export$leadingEdge)) {
-  top_up_export$leadingEdge <- sapply(top_up_export$leadingEdge,
-                                      function(x) paste(x, collapse = ", "))
-}
-if(is.list(top_down_export$leadingEdge)) {
-  top_down_export$leadingEdge <- sapply(top_down_export$leadingEdge,
-                                        function(x) paste(x, collapse = ", "))
-}
-
+if (is.list(top_up_export$leadingEdge))
+  top_up_export$leadingEdge   <- sapply(top_up_export$leadingEdge,   paste, collapse = ", ")
+if (is.list(top_down_export$leadingEdge))
+  top_down_export$leadingEdge <- sapply(top_down_export$leadingEdge, paste, collapse = ", ")
 summary_table <- rbind(
-  top_up_export %>% mutate(Direction = "Up in SGA"),
+  top_up_export   %>% mutate(Direction = "Up in SGA"),
   top_down_export %>% mutate(Direction = "Down in SGA")
-) %>%
-  mutate(Pathway_Clean = clean_pathway_names(pathway, 60)) %>%
+) %>% mutate(Pathway_Clean = clean_pathway_names(pathway, 60)) %>%
   dplyr::select(pathway, Pathway_Clean, Direction, NES, pval, padj, size)
+write.csv(summary_table, file.path(GSEA_DIR, "GSEA_GOBP_Top_Summary.csv"), row.names = FALSE)
 
-write.csv(summary_table, 
-          file.path(GSEA_DIR, "GSEA_GOBP_Top_Summary.csv"), row.names = FALSE)
+# ── Figure E: Leading edge heatmap (3 panels) ────────────────────────────────
+#    LEFT  = Paired Difference SGA(n) - AGA(n)  +  % consistency
+#    MID   = Individual Z-score by sample
+#    RIGHT = Group mean (SGA vs AGA)  +  mean-delta barplot
 
-# Save R objects
-save(fgsea_results, top_up, top_down, significant_pathways, gene_list,
-     file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RData"))
+create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_plot = TRUE) {
+  
+  # Extract leading edge genes present in dds
+  if (is.list(fgsea_row$leadingEdge)) le_genes <- fgsea_row$leadingEdge[[1]]
+  else le_genes <- unlist(strsplit(as.character(fgsea_row$leadingEdge), ", "))
+  le_genes <- le_genes[le_genes %in% rownames(dds_obj)]
+  if (length(le_genes) < 3) { cat("  Warning: too few genes for", pw_name, "\n"); return(NULL) }
+  
+  clean_name <- clean_pathway_names(pw_name, 55)
+  cat("  ->", clean_name, "(n =", length(le_genes), ")\n")
+  
+  # Z-score matrix
+  vsd_le      <- vst(dds_obj, blind = FALSE)
+  mat_z       <- t(scale(t(assay(vsd_le)[le_genes, , drop = FALSE])))
+  si          <- as.data.frame(colData(dds_obj))
+  si$pair_display <- factor(PAIR_MAPPING[as.character(si$twin_pair)],
+                            levels = c("1","2","3","4","5"))
+  
+  nes   <- fgsea_row$NES
+  pares <- unique(si$twin_pair)
+  
+  # Consistency: % of pairs with concordant expression change
+  consistency <- sapply(le_genes, function(g) {
+    count <- 0
+    for (par in pares) {
+      sga <- rownames(si)[si$twin_pair == par & si$condition == "SGA"]
+      aga <- rownames(si)[si$twin_pair == par & si$condition == "AGA"]
+      if (length(sga) == 1 && length(aga) == 1) {
+        if (nes > 0 && mat_z[g, sga] > mat_z[g, aga]) count <- count + 1
+        if (nes < 0 && mat_z[g, sga] < mat_z[g, aga]) count <- count + 1
+      }
+    }
+    count / length(pares) * 100
+  })
+  
+  gene_order  <- names(sort(consistency, decreasing = TRUE))
+  mat_z       <- mat_z[gene_order, , drop = FALSE]
+  consistency <- consistency[gene_order]
+  
+  # Shared aesthetics — uses PAIR_COLORS from CONFIGURATION
+  pair_colors <- PAIR_COLORS
+  cond_colors <- c("SGA" = "gray20", "AGA" = "gray70")
+  heat_colors <- colorRamp2(c(-2, 0, 2), c("#4575B4", "white", "#D73027"))
+  
+  # ── LEFT: Paired Difference ──────────────────────────────────────────────
+  pares_ord <- sort(unique(as.character(si$twin_pair)))
+  mat_diff  <- matrix(NA, nrow = length(gene_order), ncol = length(pares_ord),
+                      dimnames = list(gene_order, NULL))
+  for (i in seq_along(pares_ord)) {
+    par   <- pares_ord[i]
+    sga_s <- rownames(si)[si$twin_pair == par & si$condition == "SGA"]
+    aga_s <- rownames(si)[si$twin_pair == par & si$condition == "AGA"]
+    if (length(sga_s) == 1 && length(aga_s) == 1)
+      mat_diff[, i] <- mat_z[, sga_s] - mat_z[, aga_s]
+  }
+  col_ord_diff  <- order(as.numeric(PAIR_MAPPING[pares_ord]))
+  mat_diff      <- mat_diff[, col_ord_diff, drop = FALSE]
+  pares_display <- PAIR_MAPPING[pares_ord[col_ord_diff]]
+  colnames(mat_diff) <- paste0("P", pares_display)
+  
+  ht_left <- Heatmap(
+    mat_diff, name = "dZ-score", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    top_annotation = HeatmapAnnotation(
+      `Twin Pair` = factor(pares_display, levels = c("1","2","3","4","5")),
+      col = list(`Twin Pair` = pair_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_annotation_name = FALSE, show_legend = FALSE),
+    right_annotation = rowAnnotation(
+      `% pairs` = anno_text(paste0(round(consistency), "%"),
+                            gp = gpar(fontsize = 6), width = unit(0.8, "cm")),
+      show_annotation_name = FALSE),
+    show_row_names = TRUE, row_names_side = "left",
+    row_names_gp    = gpar(fontsize = 7, fontface = "italic"),
+    column_names_gp = gpar(fontsize = 7), column_names_rot = 45,
+    column_title    = "Paired Difference\nSGA(n) - AGA(n)",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_diff) * 8, "mm"),
+    height = unit(nrow(mat_diff) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE)
+  
+  # ── MIDDLE: Individual expression ────────────────────────────────────────
+  si$order  <- ifelse(si$condition == "SGA", 1, 2)
+  col_ord   <- rownames(si)[order(si$order, si$pair_display)]
+  mat_z_mid <- mat_z[, col_ord, drop = FALSE]
+  si_ord    <- si[col_ord, ]
+  colnames(mat_z_mid) <- paste0(ifelse(si_ord$condition == "SGA", "S", "A"), si_ord$pair_display)
+  
+  ht_mid <- Heatmap(
+    mat_z_mid, name = "Z-score", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    column_split = factor(si_ord$condition, levels = c("SGA","AGA")),
+    column_gap   = unit(2, "mm"),
+    top_annotation = HeatmapAnnotation(
+      Condition   = si_ord$condition,
+      `Twin Pair` = si_ord$pair_display,
+      col = list(Condition = cond_colors, `Twin Pair` = pair_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_annotation_name = FALSE, show_legend = TRUE),
+    show_row_names  = FALSE,
+    column_names_gp = gpar(fontsize = 7), column_names_rot = 45,
+    column_title    = "Individual expression",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_z_mid) * 6, "mm"),
+    height = unit(nrow(mat_z_mid) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE)
+  
+  # ── RIGHT: Group mean + delta barplot ────────────────────────────────────
+  sga_s     <- rownames(si)[si$condition == "SGA"]
+  aga_s     <- rownames(si)[si$condition == "AGA"]
+  mean_sga  <- rowMeans(mat_z[, sga_s, drop = FALSE])
+  mean_aga  <- rowMeans(mat_z[, aga_s, drop = FALSE])
+  mat_means <- cbind(SGA = mean_sga, AGA = mean_aga)
+  diff_means <- mean_sga - mean_aga
+  
+  ht_right <- Heatmap(
+    mat_means, name = "Mean Z", col = heat_colors,
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    top_annotation = HeatmapAnnotation(
+      Label = anno_text(c("SGA","AGA"),
+                        gp = gpar(fontsize = 10, fontface = "bold"),
+                        just = "center", rot = 0, height = unit(5, "mm")),
+      Condition = c("SGA","AGA"),
+      col = list(Condition = cond_colors),
+      simple_anno_size = unit(3, "mm"),
+      show_legend = FALSE, show_annotation_name = FALSE, gap = unit(1, "mm")),
+    right_annotation = rowAnnotation(
+      `Mean d` = anno_barplot(diff_means,
+                              gp = gpar(fill = ifelse(diff_means > 0, "#D73027", "#4575B4")),
+                              width = unit(1.5, "cm"), border = FALSE,
+                              axis_param = list(gp = gpar(fontsize = 6))),
+      show_annotation_name = FALSE),
+    show_row_names  = FALSE,
+    column_names_gp = gpar(fontsize = 8),
+    column_title    = "Group mean Difference",
+    column_title_gp = gpar(fontsize = 9, fontface = "bold"),
+    width  = unit(ncol(mat_means) * 10, "mm"),
+    height = unit(nrow(mat_means) * CELL_HEIGHT_MM, "mm"),
+    border = TRUE)
+  
+  # ── Combine and save ─────────────────────────────────────────────────────
+  ht_list    <- ht_left + ht_mid + ht_right
+  title_text <- paste0("GO:BP ", clean_name,
+                       " (", length(gene_order), " leading-edge genes)\n",
+                       ifelse(nes > 0, "Up", "Down"), " in SGA",
+                       "  |  NES = ", sprintf("%.2f", nes),
+                       "  |  FDR = ", sprintf("%.2e", fgsea_row$padj))
+  w <- 18
+  h <- max(5, length(gene_order) * 0.15 + 3)
+  
+  .draw <- function() draw(ht_list,
+                           column_title = title_text, column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+                           gap = unit(4, "mm"), heatmap_legend_side = "right",
+                           annotation_legend_side = "right", padding = unit(c(10, 10, 10, 15), "mm"))
+  
+  if (show_plot) { .draw(); Sys.sleep(0.5) }
+  
+  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 300)
+  .draw(); dev.off()
+  pdf(paste0(output_prefix, ".pdf"), width = w, height = h)
+  .draw(); dev.off()
+  
+  return(TRUE)
+}
 
+# Run: top UP pathway only
+cat("\n=== LEADING EDGE HEATMAPS ===\n")
+for (i in 1:min(N_TOP_HEATMAP, nrow(top_up))) {
+  pw     <- top_up$pathway[i]
+  prefix <- file.path(HEATMAP_DIR,
+                      paste0("UP_", sprintf("%02d", i), "_",
+                             gsub("[^A-Za-z0-9]", "_", substr(pw, 6, 50))))
+  tryCatch(
+    create_le_heatmap(pw, top_up[i, ], dds, prefix),
+    error = function(e) cat("  ✗", pw, ":", e$message, "\n")
+  )
+}
+cat("✓ GSEA Done. Figures D and E saved to:", GSEA_DIR, "\n")
 
+#=============================================================================
+# 6. GENE EXPRESSION: DLK1, PPARG, FABP4  ->  Figure 4
+#=============================================================================
 
-#=========================================================================================================================================================================================
-#6 GENE EXPRESSION VISUALIZATION: DLK1, PPARG, FABP4
-
-
-# Create subdirectory for gene expression plots
 EXPR_DIR <- file.path(OUTPUT_DIR, "gene_expression")
 if (!dir.exists(EXPR_DIR)) dir.create(EXPR_DIR)
 
-# Genes to plot
 GENES_TO_PLOT <- c("DLK1", "PPARG", "FABP4")
 
-# Pair_colors
-PAIR_COLORS <- c(
-  "1" = "#E41A1C",
-  "2" = "#377EB8",
-  "3" = "#4DAF4A",
-  "4" = "#FF7F00",
-  "5" = "#984EA3"
-)
-
-# Function to create paired expression plot
+# Function: paired expression plot
+# SGA (diamond) on left, AGA (circle) on right, pairs connected by dashed lines
 create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
   
-  # Get normalized counts
-  d <- plotCounts(dds, gene = gene_name, intgroup = c("condition", "twin_pair"),
-                  returnData = TRUE)
-  
-  # Prepare data
+  d       <- plotCounts(dds, gene = gene_name,
+                        intgroup = c("condition", "twin_pair"), returnData = TRUE)
   d$Group <- d$condition
-  d$Pair <- factor(pair_mapping[as.character(d$twin_pair)],
-                   levels = c("1", "2", "3", "4", "5"))
+  d$Pair  <- factor(pair_mapping[as.character(d$twin_pair)],
+                    levels = c("1","2","3","4","5"))
+  d$count <- log2(d$count + 1)   # log2 transform
   
-  # Log2 transform
-  d$count <- log2(d$count + 1)
-  
-  # Get p-value from DESeq2
   p_value <- res[gene_name, "pvalue"]
+  p_text  <- if (is.na(p_value)) "p = NA" else
+    if (p_value < 0.001) "p < 0.001" else
+      sprintf("p = %.2f", p_value)
   
-  # Format p-value
-  if (is.na(p_value)) {
-    p_text <- "p = NA"
-  } else if (p_value < 0.001) {
-    p_text <- "p < 0.001"
-  } else if (p_value < 0.01) {
-    p_text <- sprintf("p = %.3f", p_value)
-  } else {
-    p_text <- sprintf("p = %.2f", p_value)
-  }
+  y_max    <- max(d$count)
+  y_range  <- max(d$count) - min(d$count)
+  bracket_y <- y_max + y_range * 0.08
+  p_text_y  <- y_max + y_range * 0.18
   
-  # Calculate positions for annotation
-  y_max <- max(d$count)
-  y_range <- max(d$count) - min(d$count)
-  bracket_y <- y_max + (y_range * 0.08)
-  p_text_y <- y_max + (y_range * 0.18)
-  
-  # Create plot
-  p <- ggplot(d, aes(x = Group, y = count)) +
+  ggplot(d, aes(x = Group, y = count)) +
     geom_line(aes(group = Pair), color = "gray50", linewidth = 0.8,
               linetype = "dashed", alpha = 0.8) +
     geom_point(aes(color = Pair, shape = Group), size = 4.5, stroke = 1.2, alpha = 0.9) +
@@ -709,76 +667,67 @@ create_paired_plot <- function(gene_name, dds, res, pair_mapping, pair_colors) {
     scale_shape_manual(values = c("SGA" = 18, "AGA" = 16)) +
     scale_x_discrete(limits = c("SGA", "AGA")) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
-    # Significance bracket
     annotate("segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y,
              linewidth = 0.5, color = "black") +
-    annotate("segment", x = 1, xend = 1, y = bracket_y, 
-             yend = bracket_y - (y_range * 0.03), linewidth = 0.5, color = "black") +
-    annotate("segment", x = 2, xend = 2, y = bracket_y, 
-             yend = bracket_y - (y_range * 0.03), linewidth = 0.5, color = "black") +
+    annotate("segment", x = 1, xend = 1, y = bracket_y,
+             yend = bracket_y - y_range * 0.03, linewidth = 0.5, color = "black") +
+    annotate("segment", x = 2, xend = 2, y = bracket_y,
+             yend = bracket_y - y_range * 0.03, linewidth = 0.5, color = "black") +
     annotate("text", x = 1.5, y = p_text_y, label = p_text,
              size = 4, fontface = "italic", color = "black") +
     theme_classic(base_size = 11) +
     theme(
-      plot.title = element_text(size = 12, face = "bold.italic", hjust = 0.5),
-      axis.title.x = element_blank(),
-      axis.title.y = element_text(size = 11, color = "black"),
-      axis.text.x = element_text(size = 11, face = "bold", color = "black"),
-      axis.text.y = element_text(size = 10.5, color = "black"),
-      axis.line = element_line(linewidth = 0.5, color = "black"),
+      plot.title    = element_text(size = 12, face = "bold.italic", hjust = 0.5),
+      axis.title.x  = element_blank(),
+      axis.title.y  = element_text(size = 11, color = "black"),
+      axis.text.x   = element_text(size = 11, face = "bold", color = "black"),
+      axis.text.y   = element_text(size = 10.5, color = "black"),
+      axis.line     = element_line(linewidth = 0.5, color = "black"),
       legend.position = "none"
     ) +
     labs(y = expression(Log[2]*"(normalized counts + 1)")) +
     ggtitle(gene_name)
-  
-  return(p)
 }
 
-# Ensure size factors are calculated
+# Ensure size factors are present
 dds <- estimateSizeFactors(dds)
-
-# Get DESeq2 results
 res <- results(dds, contrast = c("condition", "SGA", "AGA"))
 
-# Create plots for each gene
+# Generate individual plots
 plot_list <- list()
-
 for (gene in GENES_TO_PLOT) {
   if (gene %in% rownames(dds)) {
     plot_list[[gene]] <- create_paired_plot(gene, dds, res, PAIR_MAPPING, PAIR_COLORS)
     cat("✓", gene, "- p-value:", format(res[gene, "pvalue"], digits = 3), "\n")
+  } else {
+    cat("✗", gene, "not found in dds\n")
   }
 }
 
-# Create legend plot
+# Legend panel (Pair 1-5 with matching colors)
 legend_plot <- ggplot() +
-  annotate("text", x = 0, y = 5, label = "Pair 1", size = 4, color = "#E41A1C", hjust = 0) +
-  annotate("text", x = 0, y = 4, label = "Pair 2", size = 4, color = "#377EB8", hjust = 0) +
-  annotate("text", x = 0, y = 3, label = "Pair 3", size = 4, color = "#4DAF4A", hjust = 0) +
-  annotate("text", x = 0, y = 2, label = "Pair 4", size = 4, color = "#FF7F00", hjust = 0) +
-  annotate("text", x = 0, y = 1, label = "Pair 5", size = 4, color = "#984EA3", hjust = 0) +
+  annotate("text", x = 0, y = 5, label = "Pair 1", size = 4, color = PAIR_COLORS["1"], hjust = 0) +
+  annotate("text", x = 0, y = 4, label = "Pair 2", size = 4, color = PAIR_COLORS["2"], hjust = 0) +
+  annotate("text", x = 0, y = 3, label = "Pair 3", size = 4, color = PAIR_COLORS["3"], hjust = 0) +
+  annotate("text", x = 0, y = 2, label = "Pair 4", size = 4, color = PAIR_COLORS["4"], hjust = 0) +
+  annotate("text", x = 0, y = 1, label = "Pair 5", size = 4, color = PAIR_COLORS["5"], hjust = 0) +
   xlim(-0.5, 2) + ylim(0, 6) +
   theme_void() +
   theme(plot.margin = margin(40, 5, 5, 5))
 
-# Combine panels
-combined <- (plot_list[[1]] + plot_list[[2]] + plot_list[[3]] + legend_plot) +
+# Combine panels A, B, C + legend
+combined <- (plot_list[["DLK1"]] + plot_list[["PPARG"]] + plot_list[["FABP4"]] + legend_plot) +
   plot_layout(ncol = 4, widths = c(1, 1, 1, 0.3)) +
   plot_annotation(tag_levels = list(c('A', 'B', 'C', ''))) &
   theme(plot.tag = element_text(size = 12, face = "bold"))
 
-# Display
 print(combined)
 
-# Save combined figure
-ggsave(file.path(EXPR_DIR, "Figure_gene_expression_panel.pdf"),
-       plot = combined, width = 11, height = 4, device = cairo_pdf)
+ggsave(file.path(EXPR_DIR, "Figure4_gene_expression_panel.pdf"),
+       combined, width = 11, height = 4, device = cairo_pdf)
+ggsave(file.path(EXPR_DIR, "Figure4_gene_expression_panel.tiff"),
+       combined, width = 11, height = 4, dpi = 300, compression = "lzw")
+cat("✓ Figure 4 saved\n")
 
-ggsave(file.path(EXPR_DIR, "Figure_gene_expression_panel.tiff"),
-       plot = combined, width = 11, height = 4, dpi = 300, compression = "lzw")
-
-
-
-# Session info
+#=============================================================================
 sessionInfo()
-
