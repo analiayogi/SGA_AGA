@@ -485,13 +485,13 @@ ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"),
 
 gc()
 
-# ── Output directories ───────────────────────────────────────────────────────
+# Output directories 
 GSEA_DIR    <- "GSEA_GOBP_UCMSC"
 HEATMAP_DIR <- file.path(GSEA_DIR, "heatmaps_leading_edge")
 if (!dir.exists(GSEA_DIR))    dir.create(GSEA_DIR,    recursive = TRUE)
 if (!dir.exists(HEATMAP_DIR)) dir.create(HEATMAP_DIR, recursive = TRUE)
 
-# ── Parameters ───────────────────────────────────────────────────────────────
+# Parameters 
 MIN_SIZE       <- 15     # minimum gene set size for fgsea
 MAX_SIZE       <- 500    # maximum gene set size for fgsea
 FDR_CUTOFF     <- 0.05   # significance threshold
@@ -499,23 +499,19 @@ N_TOP          <- 10     # pathways shown in bar plot (up + down)
 N_TOP_HEATMAP  <- 1      # leading edge heatmaps to generate (top UP)
 CELL_HEIGHT_MM <- 2.5    # row height in heatmap
 
-# Twin pair display mapping (original ID -> display label)
-PAIR_MAPPING <- c("1" = "6", "2" = "1", "3" = "2", "4" = "3", "6" = "4", "7" = "5")
-
 set.seed(42)
 
-# ── Libraries ─────────────────────────────────────────────────────────────────
+# Libraries 
 library(DESeq2); library(fgsea); library(msigdbr)
 library(ggplot2); library(dplyr)
 library(ComplexHeatmap); library(circlize); library(grid)
 
-# ── Check dds ────────────────────────────────────────────────────────────────
+# Check dds 
 if (!exists("dds")) stop("Object 'dds' not found. Run DESeq2 pipeline first.")
 cat("✓ dds:", nrow(dds), "genes,", ncol(dds), "samples\n")
 
 
 #  GENE RANKING  (Wald statistic, SGA vs AGA)
-
 res_gsea  <- results(dds, contrast = c("condition", "SGA", "AGA"))
 gene_list <- res_gsea$stat
 names(gene_list) <- rownames(res_gsea)
@@ -523,7 +519,6 @@ gene_list <- sort(gene_list[!is.na(gene_list)], decreasing = TRUE)
 cat("Genes ranked:", length(gene_list), "\n")
 
 # GO:BP GENE SETS
-
 go_bp_sets    <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP") %>%
   dplyr::select(gs_name, gene_symbol)
 pathways_list <- split(go_bp_sets$gene_symbol, go_bp_sets$gs_name)
@@ -531,7 +526,6 @@ cat("GO:BP pathways loaded:", length(pathways_list), "\n")
 
 
 #  RUN GSEA
-
 fgsea_results <- fgsea(
   pathways = pathways_list,
   stats    = gene_list,
@@ -553,7 +547,6 @@ save(fgsea_results, gene_list, file = file.path(GSEA_DIR, "GSEA_GOBP_Results.RDa
 
 
 # FILTER  (FDR < 0.05)
-
 significant_pathways <- fgsea_results[fgsea_results$padj < FDR_CUTOFF, ]
 top_up   <- significant_pathways %>% filter(NES > 0) %>% arrange(desc(NES)) %>% head(N_TOP)
 top_down <- significant_pathways %>% filter(NES < 0) %>% arrange(NES)        %>% head(N_TOP)
@@ -561,7 +554,6 @@ top_down <- significant_pathways %>% filter(NES < 0) %>% arrange(NES)        %>%
 cat("Top UP:", nrow(top_up), "| Top DOWN:", nrow(top_down), "\n")
 
 # HELPER: clean pathway names
-
 clean_pathway_names <- function(names, max_chars = 50) {
   cleaned <- gsub("^GOBP_", "", names)
   cleaned <- gsub("_", " ", cleaned)
@@ -572,7 +564,7 @@ clean_pathway_names <- function(names, max_chars = 50) {
 }
 
 
-# FIGURE C — GSEA BAR PLOT
+# GSEA BAR PLOT
 
 plot_data <- rbind(
   top_up   %>% mutate(direction = "Up"),
@@ -623,7 +615,8 @@ ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
 cat("✓ Bar plot saved\n")
 
 
-# FIGURE D — LEADING EDGE HEATMAP (3 panels)
+# LEADING EDGE HEATMAP (3 panels)
+
 #    LEFT  = Paired Difference SGA(n) - AGA(n)  +  % consistency
 #    MID   = Individual Z-score by sample
 #    RIGHT = Group mean (SGA vs AGA)  +  mean-delta barplot
@@ -675,7 +668,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
   cond_colors <- c("SGA" = "gray20", "AGA" = "gray70")
   heat_colors <- colorRamp2(c(-2, 0, 2), c("#4575B4", "white", "#D73027"))
   
-  # ── LEFT: Paired Difference ────────────────────────────────────────────────
+  # LEFT: Paired Difference 
   pares_ord  <- sort(unique(as.character(sample_info$twin_pair)))
   mat_diff   <- matrix(NA, nrow = length(gene_order), ncol = length(pares_ord),
                        dimnames = list(gene_order, NULL))
@@ -715,7 +708,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
     border = TRUE
   )
   
-  # ── MIDDLE: Individual expression ─────────────────────────────────────────
+  # MIDDLE: Individual expression 
   sample_info$order <- ifelse(sample_info$condition == "SGA", 1, 2)
   col_ord     <- rownames(sample_info)[order(sample_info$order, sample_info$pair_display)]
   mat_z_mid   <- mat_z[, col_ord, drop = FALSE]
@@ -743,7 +736,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
     border = TRUE
   )
   
-  # ── RIGHT: Group Mean + delta barplot ─────────────────────────────────────
+  # RIGHT: Group Mean + delta barplot 
   sga_s      <- rownames(sample_info)[sample_info$condition == "SGA"]
   aga_s      <- rownames(sample_info)[sample_info$condition == "AGA"]
   mean_sga   <- rowMeans(mat_z[, sga_s, drop = FALSE])
@@ -781,7 +774,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
     border = TRUE
   )
   
-  # ── Combine and save ───────────────────────────────────────────────────────
+  #　Combine and save 
   ht_list    <- ht_left + ht_mid + ht_right
   title_text <- paste0("GO:BP ", clean_name,
                        " (", length(gene_order), " leading-edge genes)\n",
@@ -812,7 +805,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
   return(TRUE)
 }
 
-# ── Run heatmaps ─────────────────────────────────────────────────────────────
+#　Run heatmaps 
 cat("\n=== LEADING EDGE HEATMAPS ===\n")
 for (i in 1:min(N_TOP_HEATMAP, nrow(top_up))) {
   pw     <- top_up$pathway[i]
