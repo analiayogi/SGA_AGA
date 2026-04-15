@@ -17,14 +17,14 @@
 # Date:   January 2026
 # Data:   DDBJ accession PRJDB40126
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # Clear environment
 rm(list = ls())
 gc()
 
-#=============================================================================
+
 # CONFIGURATION
-#=============================================================================
+
 
 OUTPUT_DIR <- "Adipocyte_analysis_results"
 
@@ -49,9 +49,7 @@ N_PAIRS <- 5
 # Set seed for reproducibility
 set.seed(42)
 
-#=============================================================================
 # LOAD LIBRARIES
-#=============================================================================
 
 library(biomaRt)
 library(dplyr)
@@ -73,11 +71,11 @@ library(cowplot)
 library(htmlwidgets)
 library(extrafont)
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # 1. DATA PREPROCESSING
-#=============================================================================
 
 # Load raw counts
+
 raw_counts <- read.table("adipocyte_raw_counts_paired.csv",
                          header      = TRUE,
                          row.names   = 1,
@@ -155,8 +153,10 @@ if (sum(duplicated(rownames(filtered_counts))) == 0) {
 }
 
 # SAMPLE STRUCTURE VERIFICATION
+
 sample_names <- colnames(filtered_counts)
 
+# Identify paired structure
 # B = AGA (Appropriate for Gestational Age)
 # S = SGA (Small for Gestational Age)
 pairs_detected <- data.frame(
@@ -174,6 +174,7 @@ cat("\nPair summary:\n")
 print(pairs_summary)
 
 # SAVE PREPROCESSING RESULTS
+
 write.csv(mapping_table,
           file.path(OUTPUT_DIR, "Adipocyte_ensembl_to_symbol_mapping.csv"),
           row.names = FALSE)
@@ -186,9 +187,8 @@ write.csv(pairs_detected,
           file.path(OUTPUT_DIR, "Adipocyte_sample_structure.csv"),
           row.names = FALSE)
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # 2. DIFFERENTIAL EXPRESSION ANALYSIS (DESeq2)
-#=============================================================================
 
 # DATA FILTERING
 
@@ -230,6 +230,7 @@ dds <- DESeqDataSetFromMatrix(
 # RUN DESeq2
 
 cat("\n=== RUNNING DESeq2 ===\n")
+
 dds <- DESeq(dds)
 
 # Extract results
@@ -262,15 +263,14 @@ write.table(normalized_counts,
             file.path(OUTPUT_DIR, "Adipocyte_normalized_counts.txt"),
             sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE, dec = ".")
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # 3. PRINCIPAL COMPONENT ANALYSIS (3D PCA)
-#=============================================================================
 
 # Variance stabilizing transformation
 vsd <- vst(dds, blind = FALSE)
 
 # PCA
-pca       <- prcomp(t(assay(vsd)))
+pca <- prcomp(t(assay(vsd)))
 pc_scores <- as.data.frame(pca$x[, 1:3])
 
 # Calculate variance explained
@@ -364,9 +364,8 @@ cat("  2. Adjust the view as desired\n")
 cat("  3. Click the camera icon and select 'Download plot as SVG'\n")
 cat("  4. Open in Adobe Illustrator and export as needed\n")
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # 4. VOLCANO PLOT
-#=============================================================================
 
 # Count significant genes
 significant_genes <- subset(res_ordered, padj < 0.05 & abs(log2FoldChange) > 1)
@@ -434,7 +433,7 @@ ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"),
        plot = volcano_plot, device = "tiff", width = 10, height = 9,
        dpi = 300, compression = "lzw")
 
-#=============================================================================
+#=========================================================================================================================================================================================
 # 5. GSEA GO:BP - ADIPOCYTE PAIRED ANALYSIS
 # Figures for publication: Bar plot (Fig. D) + Leading Edge Heatmap (Fig. E)
 #
@@ -445,7 +444,6 @@ ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"),
 #
 # Author: Analia Yogi
 # Data:   DDBJ accession PRJDB40126
-#=============================================================================
 
 gc()
 
@@ -462,6 +460,8 @@ FDR_CUTOFF     <- 0.05   # significance threshold
 N_TOP          <- 10     # pathways shown in bar plot (up + down)
 N_TOP_HEATMAP  <- 1      # leading edge heatmaps to generate (top UP)
 CELL_HEIGHT_MM <- 2.5    # row height in heatmap
+
+set.seed(42)
 
 # Libraries
 library(DESeq2); library(fgsea); library(msigdbr)
@@ -520,7 +520,8 @@ clean_pathway_names <- function(names, max_chars = 50) {
          paste0(substr(cleaned, 1, max_chars - 3), "..."), cleaned)
 }
 
-# FIGURE D — GSEA BAR PLOT
+# GSEA BAR PLOT
+
 plot_data <- rbind(
   top_up   %>% mutate(direction = "Up"),
   top_down %>% mutate(direction = "Down")
@@ -565,7 +566,8 @@ ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
 cat("✓ Bar plot saved\n")
 
-# FIGURE E — LEADING EDGE HEATMAP (3 panels)
+#LEADING EDGE HEATMAP (3 panels)
+
 #    LEFT  = Paired Difference SGA(n) - AGA(n)  +  % consistency
 #    MID   = Individual Z-score by sample
 #    RIGHT = Group mean (SGA vs AGA)  +  mean-delta barplot
@@ -756,9 +758,8 @@ cat("\n✓ Done. Output folder:", GSEA_DIR, "\n")
 cat("  GSEA_GOBP_Barplot.png/.pdf          -> Figure D\n")
 cat("  heatmaps_leading_edge/UP_01_*.png   -> Figure E\n")
 
-#=============================================================================
-# 6. GENE EXPRESSION: DLK1, PPARG, FABP4  ->  Figure 4
-#=============================================================================
+#=========================================================================================================================================================================================
+# 6. GENE EXPRESSION: DLK1, PPARG, FABP4 
 
 EXPR_DIR <- file.path(OUTPUT_DIR, "gene_expression")
 if (!dir.exists(EXPR_DIR)) dir.create(EXPR_DIR)
@@ -860,5 +861,5 @@ ggsave(file.path(EXPR_DIR, "Figure4_gene_expression_panel.tiff"),
 cat("✓ Figure 4 saved\n")
 cat("  gene_expression/Figure4_gene_expression_panel.pdf/.tiff\n")
 
-#=============================================================================
+#=========================================================================================================================================================================================
 sessionInfo()
