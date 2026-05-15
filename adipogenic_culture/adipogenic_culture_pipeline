@@ -561,7 +561,7 @@ bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill
   )
 
 ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"),
-       bar_plot, width = 12, height = 10, dpi = 300, bg = "white")
+       bar_plot, width = 12, height = 10, dpi = 600, bg = "white")
 ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
 cat("✓ Bar plot saved\n")
