@@ -426,12 +426,12 @@ volcano_plot <- EnhancedVolcano(res,
 
 # Save volcano plot
 ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.png"),
-       plot = volcano_plot, width = 10, height = 9, dpi = 300, bg = "white")
+       plot = volcano_plot, width = 10, height = 9, dpi = 600, bg = "white")
 ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.pdf"),
        plot = volcano_plot, device = "pdf", width = 10, height = 9)
 ggsave(file.path(OUTPUT_DIR, "Adipocyte_volcano_plot.tiff"),
        plot = volcano_plot, device = "tiff", width = 10, height = 9,
-       dpi = 300, compression = "lzw")
+       dpi = 600, compression = "lzw")
 
 #=========================================================================================================================================================================================
 # 5. GSEA GO:BP - ADIPOCYTE PAIRED ANALYSIS
@@ -733,7 +733,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
   
   if (show_plot) { .draw(); Sys.sleep(0.5) }
   
-  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 300)
+  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 600)
   .draw(); dev.off()
   pdf(paste0(output_prefix, ".pdf"), width = w, height = h)
   .draw(); dev.off()
@@ -856,7 +856,7 @@ print(combined)
 ggsave(file.path(EXPR_DIR, "Figure4_gene_expression_panel.pdf"),
        combined, width = 11, height = 4, device = cairo_pdf)
 ggsave(file.path(EXPR_DIR, "Figure4_gene_expression_panel.tiff"),
-       combined, width = 11, height = 4, dpi = 300, compression = "lzw")
+       combined, width = 11, height = 4, dpi = 600, compression = "lzw")
 
 cat("✓ Figure 4 saved\n")
 cat("  gene_expression/Figure4_gene_expression_panel.pdf/.tiff\n")
