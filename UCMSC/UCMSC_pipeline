@@ -461,14 +461,14 @@ volcano_plot <- EnhancedVolcano(res,
 
 # Save volcano plot
 ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.png"), 
-       plot = volcano_plot, width = 10, height = 9, dpi = 300, bg = "white")
+       plot = volcano_plot, width = 10, height = 9, dpi = 600, bg = "white")
 
 ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.pdf"), 
        plot = volcano_plot, device = "pdf", width = 10, height = 9)
 
 ggsave(file.path(OUTPUT_DIR, "UCMSC_volcano_plot.tiff"), 
        plot = volcano_plot, device = "tiff", width = 10, height = 9, 
-       dpi = 300, compression = "lzw")
+       dpi = 600, compression = "lzw")
 
 #=========================================================================================================================================================================================
 # 5 GSEA GO:BP - UCMSC PAIRED ANALYSIS
@@ -609,7 +609,7 @@ bar_plot <- ggplot(plot_data, aes(x = NES, y = reorder(pathway_clean, NES), fill
   )
 
 ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.png"),
-       bar_plot, width = 12, height = 10, dpi = 300, bg = "white")
+       bar_plot, width = 12, height = 10, dpi = 600, bg = "white")
 ggsave(file.path(GSEA_DIR, "GSEA_GOBP_Barplot.pdf"),
        bar_plot, width = 12, height = 10, device = cairo_pdf)
 cat("✓ Bar plot saved\n")
@@ -796,7 +796,7 @@ create_le_heatmap <- function(pw_name, fgsea_row, dds_obj, output_prefix, show_p
   
   if (show_plot) { .draw(); Sys.sleep(0.5) }
   
-  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 300)
+  png(paste0(output_prefix, ".png"), width = w, height = h, units = "in", res = 600)
   .draw(); dev.off()
   
   pdf(paste0(output_prefix, ".pdf"), width = w, height = h)
