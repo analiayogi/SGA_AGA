@@ -49,7 +49,7 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Package versions used
 |---|---|---|
 | DESeq2 | 1.44.0 | Normalization and paired differential expression |
 | fgsea | 1.30.0 | Gene set enrichment analysis |
-| msigdbr | 25.1.1 | GO:BP gene sets (MSigDB v7.5.1) |
+| msigdbr | 25.1.1 | GO:BP gene sets (MSigDB 2025.1.Hs) |
 | biomaRt | 2.60.1 | Ensembl ID to gene symbol annotation |
 | ComplexHeatmap | 2.20.0 | Leading edge heatmaps |
 | circlize | 0.4.17 | Heatmap color scales |
@@ -67,7 +67,7 @@ install.packages(c("BiocManager", "remotes", "dplyr", "ggplot2", "plotly", "html
                    "patchwork", "circlize", "pheatmap", "RColorBrewer", "stringr",
                    "gridExtra", "cowplot", "extrafont"))
 BiocManager::install(c("DESeq2", "biomaRt", "fgsea", "EnhancedVolcano", "ComplexHeatmap"))
-remotes::install_version("msigdbr", version = "7.5.1")
+remotes::install_version("msigdbr", version = "25.1.1")
 ```
 
 ## Notes
