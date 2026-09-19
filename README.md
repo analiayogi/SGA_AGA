@@ -20,9 +20,9 @@ The raw counts matrices used as input for the published analysis are available i
 
 ## Repository structure
 
-- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs (six twin pairs), the Ensemble ID to HGNC symbol mapping used for the conversion, and the R pipeline (differential expression, GSEA, leading-edge analysis, and plots shown in figure 2)
+- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs (six twin pairs), the Ensembl ID to HGNC symbol mapping used for the conversion, and the R pipeline (differential expression, GSEA, leading-edge analysis, and plots shown in figure 2)
 
-- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC after 21 days of adipogenic differentiation (five twin pairs). The Ensemble ID to HGNC symbol mapping used for the conversion, and the R pipeline used for the analysis (differential expression, GSEA, and leading edge analysis) and plots shown in Figure 3B-E and Figure 4, are included.
+- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC after 21 days of adipogenic differentiation (five twin pairs). The Ensembl ID to HGNC symbol mapping used for the conversion, and the R pipeline used for the analysis (differential expression, GSEA, and leading edge analysis) and plots shown in Figure 3B-E and Figure 4, are included.
 
 ## Sample naming
 
@@ -61,7 +61,7 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Package versions used
 
 Installation:
 
-The analysis requires R 4.4.x (Bioconductor 3.19 is not available for 4.5 or later)
+The analysis requires R 4.4.x (Bioconductor 3.19 is not available for 4.5 or later).
 
 ```r
 install.packages(c("BiocManager", "remotes"))
@@ -88,12 +88,15 @@ sapply(c("DESeq2", "fgsea", "msigdbr", "biomaRt", "ComplexHeatmap", "EnhancedVol
 
 - An internet connection is required for the gene annotation steps ('biomaRt' queries Ensembl).
   
-- Ensembl release 115 was used for gene annotation (Ensembl ID to HGNC symbol). To reproduced the published annotation, replace that call wit
+- Ensembl release 115 was used for gene annotation (Ensembl ID to HGNC symbol). To reproduced the published annotation, replace that call with:
+  
    ```r
-   mart < - useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl", version = 115)
+   mart <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl", version = 115)```
 
 
-- Results may differ slightly if other package versions or ensemble release are used.
+- Results may differ slightly if other package versions or ensembl release are used.
+
+-If the annotation steps fails due to server-side restrictions, use tables "UCMSC_ensembl_to_symbol_mapping.csv" and "adipocyte_ensembl_to_symbol_mapping.csv"  which contains the annotations used for the published analysis.
 
 ## Contact
 
