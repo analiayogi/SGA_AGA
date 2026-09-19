@@ -69,7 +69,7 @@ install.packages(c("BiocManager", "remotes"))
 
 # Select Bioconductor 3.19 before installing any Bioconductor package.
 # Without this step BiocManager installs the current release, which provides
-# newer DESeq2 and fgsea versions and does not reproduce the published figures.
+# newer DESeq2 and fgsea versions and may not reproduce the published figures.
 BiocManager::install(version = "3.19")
 BiocManager::install(c("DESeq2", "biomaRt", "fgsea", "EnhancedVolcano", "ComplexHeatmap"))
 
