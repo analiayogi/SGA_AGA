@@ -73,8 +73,10 @@ remotes::install_version("msigdbr", version = "25.1.1")
 ## Notes
 
 - An internet connection is required for the gene annotation steps ('biomaRt' queries Ensembl).
+  
+- Ensemble release 115 was used for gene annotation (Ensembl ID to HGNC symbol)
 
-- Results may differ slightly if other package versions are used.
+- Results may differ slightly if other package versions or ensemble release are used.
 
 ## Contact
 
