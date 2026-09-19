@@ -20,10 +20,9 @@ The raw counts matrices used as input for the published analysis are available i
 
 ## Repository structure
 
-- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs (six twin pairs), and the R pipeline (differential expression, GSEA, leading-edge analysis, and plots shown in figure 2) 
+- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs (six twin pairs), the Ensemble ID to HGNC symbol mapping used for the conversion, and the R pipeline (differential expression, GSEA, leading-edge analysis, and plots shown in figure 2)
 
-- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC after 21 days of adipogenic differentiation (five twin pairs).
-The R pipeline used for the analysis (differential expression, GSEA, and leading edge analysis) and plots shown in Figure 3B-E and Figure 4, is included.
+- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC after 21 days of adipogenic differentiation (five twin pairs). The Ensemble ID to HGNC symbol mapping used for the conversion, and the R pipeline used for the analysis (differential expression, GSEA, and leading edge analysis) and plots shown in Figure 3B-E and Figure 4, are included.
 
 ## Sample naming
 
@@ -92,7 +91,7 @@ sapply(c("DESeq2", "fgsea", "msigdbr", "biomaRt", "ComplexHeatmap", "EnhancedVol
 - Ensembl release 115 was used for gene annotation (Ensembl ID to HGNC symbol). To reproduced the published annotation, replace that call wit
    ```r
    mart < - useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl", version = 115)
-  
+
 
 - Results may differ slightly if other package versions or ensemble release are used.
 
