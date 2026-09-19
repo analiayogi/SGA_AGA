@@ -70,7 +70,7 @@ library(extrafont)
 
 # Load raw counts
 
-raw_counts <- read.table("UCMSC_paired_raw_counts.csv", 
+raw_counts <- read.table("UCMSC_raw_counts_paired.csv", 
                          header = TRUE, 
                          row.names = 1, 
                          sep = ";",
