@@ -2,7 +2,7 @@
 
 R Pipelines for the paired RNA-seq analysis of human umbilical cord mesenchymal stem cells (hUCMSCs) and derived adipogenic cultures.
 
-Samples: hUCMSCs were established from six monozygotic, monochorionic-diamniotic twin pairs with at least 20% weight discordance. In each pair, the larger twin was classified  appropriate for gestational age (AGA) and the smaller was small for gestational age (SGA). Five of the six pair samples were available for adipogenic differentiation.
+Samples: hUCMSCs were established from six monozygotic, monochorionic-diamniotic twin pairs with at least 20% weight discordance. In each pair, the larger twin was classified as appropriate for gestational age (AGA) and the smaller was small for gestational age (SGA). Five of the six pair samples were available for adipogenic differentiation.
 
 ## Reference 
 
@@ -26,7 +26,7 @@ The raw counts matrices used as input for the published analysis are available i
 
 ## Sample naming
 
-Column names use a condition prefix: S= SGA twin and B= AGA co-twin. Sample identifiers were assigned during sequencing and renumbered for figure presentation; the correspondence between original and renumbered identifiers, together with the DDBJ BioSample accessions, is provided in Supplementary Table 1 of the article.
+Column names use a condition prefix: S = SGA twin and B = AGA co-twin. Sample identifiers were assigned during sequencing and renumbered for figure presentation; the correspondence between original and renumbered identifiers, together with the DDBJ BioSample accessions, is provided in Supplementary Table 1 of the article.
 
 For adipogenic differentiation, samples from one twin pair were not available.
 
@@ -88,15 +88,16 @@ sapply(c("DESeq2", "fgsea", "msigdbr", "biomaRt", "ComplexHeatmap", "EnhancedVol
 
 - An internet connection is required for the gene annotation steps ('biomaRt' queries Ensembl).
   
-- Ensembl release 115 was used for gene annotation (Ensembl ID to HGNC symbol). To reproduced the published annotation, replace that call with:
+- The scripts call useMart("ensembl", ...), which queries the current Ensembl release at run time. Ensembl release 115 was current when the analysis was performed and was used for gene annotation (Ensembl ID to HGNC symbol and biotype). To reproduce the published annotation, replace that call with:
   
    ```r
-   mart <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl", version = 115)```
+   mart <- useEnsembl("ensembl", dataset = "hsapiens_gene_ensembl", version = 115)
+   ```
 
 
-- Results may differ slightly if other package versions or ensembl release are used.
+- Results may differ slightly if other package versions or Ensembl release are used.
 
--If the annotation steps fails due to server-side restrictions, use tables "UCMSC_ensembl_to_symbol_mapping.csv" and "adipocyte_ensembl_to_symbol_mapping.csv"  which contains the annotations used for the published analysis.
+-If the annotation steps fails with "HTTP 403 forbidden" (server-side restrictions),in that case,  use the tables "UCMSC_ensembl_to_symbol_mapping.csv" and "adipocyte_ensembl_to_symbol_mapping.csv"  which contains the annotations used for the published analysis (Ensembl release 115).
 
 ## Contact
 
