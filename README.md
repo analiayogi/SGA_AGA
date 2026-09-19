@@ -2,7 +2,7 @@
 
 R Pipelines for the paired RNA-seq analysis of human umbilical cord mesenchymal stem cells (hUCMSCs) and derived adipogenic cultures.
 
-Samples: hUCMSCs were established from six monozygotic, monochorionic-diamniotic twin pairs with at least 20% weight discordance. In each pair, the larger twin was classified  appropiate for gestational age (AGA) and the smaller was small for gestational age (SGA). Five of the six pair samples were available for adipogenic differentiation.
+Samples: hUCMSCs were established from six monozygotic, monochorionic-diamniotic twin pairs with at least 20% weight discordance. In each pair, the larger twin was classified  appropriate for gestational age (AGA) and the smaller was small for gestational age (SGA). Five of the six pair samples were available for adipogenic differentiation.
 
 ## Reference 
 
@@ -27,7 +27,7 @@ The R pipeline used for the analysis (differential expression, GSEA, and leading
 
 ## Sample naming
 
-Columns names use a condition prefix: S= SGA twin and B= AGA co-twin. Sample identifiers were assigned during sequencing and renumbered for figure presentation; the correspondence between original and renumbered identifiers, together with the DDBJ BioSample accesions, is provided in Supplementary Table 1 of the article.
+Column names use a condition prefix: S= SGA twin and B= AGA co-twin. Sample identifiers were assigned during sequencing and renumbered for figure presentation; the correspondence between original and renumbered identifiers, together with the DDBJ BioSample accessions, is provided in Supplementary Table 1 of the article.
 
 For adipogenic differentiation, samples from one twin pair were not available.
 
@@ -36,9 +36,9 @@ For adipogenic differentiation, samples from one twin pair were not available.
 Each folder contains the corresponding raw counts matrix and R pipeline. Steps:
 
 1. Gene annotation with biomaRt, and filtering lowly expressed genes (at least 10 raw counts in at least 5 samples).
-2. Paired differential expression with DESeq2 ('design= ~ twin_pair + condition; SGA vs AGA').
+2. Paired differential expression with DESeq2 (`design= ~ twin_pair + condition; SGA vs AGA`).
 3. 3D PCA on variance-stabilized counts and volcano plot (nominal *P* < 0.05 and |log2FC| > 1, for exploratory purposes).
-4. GSEA with fgsea on GO:BP gene sets (15-500 genes), FDR < 0.05 and leading-edge heatmap of the top positively enriched gene sets.
+4. GSEA with fgsea on GO:BP gene sets (15-500 genes, FDR < 0.05), and leading-edge heatmap of the top positively enriched gene set.
 5. Only in the "adipogenic_culture" script: paired expression plots for *DLK1*, *PPARG*, and *FABP4* (nominal *P* value).
 
 ## Requirements
@@ -72,7 +72,7 @@ remotes::install_version("msigdbr", version = "7.5.1")
 
 ## Notes
 
-- An internet connection is required for the gene annotation steps ('biomaRt' queries Ensembl)
+- An internet connection is required for the gene annotation steps ('biomaRt' queries Ensembl).
 
 - Results may differ slightly if other package versions are used.
 
