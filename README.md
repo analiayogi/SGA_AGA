@@ -49,7 +49,7 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Packages versions use
 | circlize | 0.4.17 | Heatmap color scales |
 | EnchancedVolcano | 1.22.0 | Volcano plots |
 | plotly | 4.10.4 | 3D PCA |
-| htmlwidgets | 1.6.4 Save 3D PCA as HTML |
+| htmlwidgets | 1.6.4 | Save 3D PCA as HTML |
 | ggplot2 | 3.5.2 | Bar plots and gene expression plots |
 | patchwork | 1.3.0 | Figure panles (adipogenic script) |
 | dplyr | 1.1.4 | Data handlong |
