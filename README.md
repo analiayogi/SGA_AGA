@@ -97,8 +97,8 @@ sapply(c("DESeq2", "fgsea", "msigdbr", "biomaRt", "ComplexHeatmap", "EnhancedVol
 
 - Results may differ slightly if other package versions or Ensembl release are used.
 
--If the annotation steps fails with "HTTP 403 forbidden" (server-side restrictions),in that case,  use the tables "UCMSC_ensembl_to_symbol_mapping.csv" and "adipocyte_ensembl_to_symbol_mapping.csv"  which contains the annotations used for the published analysis (Ensembl release 115).
-
+- If the annotation step fails with "HTTP 403 Forbidden", Ensembl is rejecting requests from biomaRt 2.60.1 (a server-side restriction on older biomaRt versions, unrelated to the scripts). In that case, use the tables `UCMSC_ensembl_to_symbol_mapping.csv` and `adipocyte_ensembl_to_symbol_mapping.csv`, which contain the annotation used for the published analysis (Ensembl release 115).
+  
 ## Contact
 
 Analia Yogi: ayogi.ped@tmd.ac.jp
