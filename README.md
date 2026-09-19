@@ -62,12 +62,28 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Package versions used
 
 Installation:
 
+The analysis requires R 4.4.x (Bioconductor 3.19 is not available for 4.5 or later)
+
 ```r
-install.packages(c("BiocManager", "remotes", "dplyr", "ggplot2", "plotly", "htmlwidgets",
-                   "patchwork", "circlize", "pheatmap", "RColorBrewer", "stringr",
-                   "gridExtra", "cowplot", "extrafont"))
+install.packages(c("BiocManager", "remotes"))
+
+# Select Bioconductor 3.19 before installing any Bioconductor package.
+# Without this step BiocManager installs the current release, which provides
+# newer DESeq2 and fgsea versions and does not reproduce the published figures.
+BiocManager::install(version = "3.19")
 BiocManager::install(c("DESeq2", "biomaRt", "fgsea", "EnhancedVolcano", "ComplexHeatmap"))
+
+install.packages(c("dplyr", "ggplot2", "plotly", "htmlwidgets", "patchwork", "circlize",
+                   "pheatmap", "RColorBrewer", "stringr", "gridExtra", "cowplot", "extrafont"))
+
 remotes::install_version("msigdbr", version = "25.1.1")
+```
+
+To check the installed versions against the table above:
+
+```r
+sapply(c("DESeq2", "fgsea", "msigdbr", "biomaRt", "ComplexHeatmap", "EnhancedVolcano"),
+       function(p) as.character(packageVersion(p)))
 ```
 
 ## Notes
