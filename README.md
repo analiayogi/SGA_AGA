@@ -2,7 +2,9 @@
 
 R Pipelines for the paired RNA-seq analysis of human umbilical cord mesenchymal stem cells (hUCMSCs) and derived adipogenic cultures.
 
-Samples: Umbilical cord tissues from birth weight discordant monozygotic diamniotic twins (at least 20%) were collected for this study. One twin was classified as small for gestational age (SGA) while the co-twin as adequate for gestational age (AGA).
+Samples: hUCMSCs were established from six monozygotic. monochorionic-diamniotic twins pairs with at least 20% weight discordance. In each pair, the larger twin was classified  adequate for gestational age (AGA) and the smaller was small for gestatio.nal age (SGA). Five of the six pair samples 
+
+were available for adipogenic differentiation
 
 ## Reference 
 
@@ -16,24 +18,30 @@ https://doi.org/10.1016/j.placenta.2026.09.009
 
 Raw RNA-seq data are publicly available at the DNA Data Bank of Japan (DDBJ). The accession number is PRJDB40126.
 
-The raw counts matrices used as input for the published analysis are available in this repository (one per folder).
+The raw counts matrices used as input for the published analysis are available in this repository (one per folder), and were obtained from the raw FASTQ files with fastp (v0.23.4), STAR (v2.7.11b; GRCh38, Ensembl release 111)and featureCounts (v2.0.1), as described in the article.
 
 ## Repository structure
 
-- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs and the pipeline for the analysis in R: differential expression, GSEA, and leading edge analysis. Also includes the published plots.
+- "UCMSC": Includes RNA-seq raw counts matrix from hUCMSCs (six twin pairs), and the R pipeline (differential expression, GSEA, leading-edge analysis, and plots shown in figure 2) 
 
-- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC that underwent adipogenic differentiation until day 21. On that day, total RNA extraction was performed.
-The pipeline used for the following analysis in R is included: differential expression, GSEA, and leading edge analysis. The scripts used for plot preparation are included.
+- "adipogenic_culture": Includes the RNA-seq raw count matrix collected from hUCMSC after 21 days of adipogenic differentiation until day 21 (five pair twins).
+The R pipeline used for the analysis (differential expression, GSEA, and leading edge analysis) and plots shown in Figure 3B-E and Figure 4, is included.
 
 ## Sample naming
 
-Columns names use a condition prefix: S= SGA twin and B= AGA co-twin. Twin pairs were renumbered for the figure presentation in the article. Supplementary Table 1 includes the tracking of such modifications.
+Columns names use a condition prefix: S= SGA twin and B= AGA co-twin. Sample identifiers were assigned during sequencing and renumbered for figure presentation; the correspondence between original and renumbered identifiers, together with the DDBJ BioSample accesiones, is provided in Supplementary Table 1 of the article.
 
 For adipogenic differentiation, samples from one twin pair were not available.
 
 ## Analysis pipeline
 
-Each folder contains the corresponding raw counts matrix and R pipeline
+Each folder contains the corresponding raw counts matrix and R pipeline. Steps:
+
+1. Gene annotation with biomaRT, and filtering lowly expressed genes (at least 10 raw counts in at least 5 samples).
+2. Paired differential expression with DESeq2 ('design= ~ twin_pair + condition; SGA vs AGA)/
+3. 3D PCA on variance-stabilized counts and volcano plot (nominal *P* < 0.05 and |log2FC| > 2, for exploratory purposes).
+4. GSEA with fgsea on GO:BP gene sets (15-500 genes). FDR < 0.05 and leading-edge heatmap of the top positively enriched gene sets.
+5. Only in the "adipogenic_culture" script: paired expression plots for *DLK1*, *PPARG*, and *FABP4* (nominal *P* value)
 
 ## Requirements
 
@@ -45,7 +53,7 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Package versions used
 | fgsea | 1.30.0 | Gene set enrichment analysis |
 | msigdbr | 7.5.1 | GO:BP gene sets (MSigDB v7.5.1) |
 | biomaRT | 2.60.1 | Ensembl ID to gene symbol annotation |
-| ComplexHeatmap | 2.20.2 | Leading edge heatmaps |
+| ComplexHeatmap | 2.20.0 | Leading edge heatmaps |
 | circlize | 0.4.17 | Heatmap color scales |
 | EnhancedVolcano | 1.22.0 | Volcano plots |
 | plotly | 4.10.4 | 3D PCA |
@@ -67,7 +75,6 @@ remotes::install_version("msigdbr", version = "7.5.1")
 ## Notes
 - An internet connection is required for the gene annotation steps ('biomaRT' queries Ensembl)
 - Results may differ slightly if other package versions are used.
-- Input count matrices were obtained from the raw FASTQ files with fastp (v0.23.4), STAR (v2.7.11b; GRCh38, Ensembl release 111)and featureCounts (v2.0.1), as described in the article.
 
 ## Contact
 
