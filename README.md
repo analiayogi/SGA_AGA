@@ -61,7 +61,7 @@ The analysis was run in R (v4.4.1) with Bioconductor 3.19. Package versions used
 
 Installation:
 
-The analysis requires R 4.4.x (Bioconductor 3.19 is not available for 4.5 or later).
+The analysis requires R 4.4.1 (Bioconductor 3.19 is not available for 4.5 or later).
 
 ```r
 install.packages(c("BiocManager", "remotes"))
